@@ -1,0 +1,29 @@
+name = "url-redirect"
+main = "redirect.js"
+compatibility_date = "2023-09-01"
+
+# KV命名空间绑定
+kv_namespaces = [
+  { binding = "URL_REDIRECTS", id = "YOUR_KV_NAMESPACE_ID" }
+]
+
+# 环境变量配置
+[vars]
+# 管理员密码 - 请更改为安全的密码
+ADMIN_PASSWORD = "change_this_to_secure_password"
+
+[build]
+command = ""
+
+[env.production]
+# 生产环境特定设置
+route = ""
+# 如果需要自定义域名，取消下面一行注释并填写域名
+# routes = [
+#   { pattern = "example.com/*", zone_name = "example.com" }
+# ]
+
+# 生产环境变量配置 - 覆盖默认变量
+[env.production.vars]
+# 在实际部署时设置密码
+# ADMIN_PASSWORD = "your_production_secure_password" 
