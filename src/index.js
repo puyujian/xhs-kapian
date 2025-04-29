@@ -31,7 +31,7 @@ const app = {
     const auth = new Auth(db, env.JWT_SECRET);
     
     // 处理静态资源
-    if (path === '/' || path === '') {
+    if ((path === '/' || path === '') && !url.searchParams.has('key')) {
       // 首页
       return new Response(
         `<!DOCTYPE html>
