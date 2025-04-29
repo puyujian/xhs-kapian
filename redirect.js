@@ -1,12 +1,240 @@
 /**
  * Cloudflare Worker URL重定向服务
- * 根据URL参数'key'查询KV数据库并重定向到对应URL
- * 包含管理面板功能
+ * 使用D1 SQL数据库存储和查询重定向规则和访问统计
  */
 
 addEventListener('fetch', event => {
   event.respondWith(handleRequest(event.request))
 })
+
+/**
+ * 初始化数据库表结构
+ * 只需在首次部署或表结构变更时执行
+ */
+async function initDatabase() {
+  try {
+    // 创建重定向表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS redirects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        key TEXT UNIQUE NOT NULL,
+        url TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `).run();
+
+    // 创建访问日志表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS visit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        target_url TEXT NOT NULL,
+        timestamp TIMESTAMP NOT NULL,
+        ip_hash TEXT,
+        user_agent TEXT,
+        country TEXT,
+        region TEXT,
+        city TEXT,
+        referer TEXT,
+        browser TEXT,
+        os TEXT,
+        device TEXT
+      )
+    `).run();
+
+    // 创建每日统计表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS daily_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        date TEXT NOT NULL,
+        count INTEGER DEFAULT 1,
+        UNIQUE(redirect_key, date)
+      )
+    `).run();
+
+    // 创建地理位置统计表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS geo_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        country TEXT NOT NULL,
+        count INTEGER DEFAULT 1,
+        UNIQUE(redirect_key, country)
+      )
+    `).run();
+
+    // 创建设备类型统计表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS device_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        device_type TEXT NOT NULL,
+        count INTEGER DEFAULT 1,
+        UNIQUE(redirect_key, device_type)
+      )
+    `).run();
+
+    // 创建浏览器统计表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS browser_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        browser TEXT NOT NULL,
+        count INTEGER DEFAULT 1,
+        UNIQUE(redirect_key, browser)
+      )
+    `).run();
+
+    // 创建操作系统统计表
+    await DB.prepare(`
+      CREATE TABLE IF NOT EXISTS os_stats (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        redirect_key TEXT NOT NULL,
+        os TEXT NOT NULL,
+        count INTEGER DEFAULT 1,
+        UNIQUE(redirect_key, os)
+      )
+    `).run();
+
+    return { success: true, message: "数据库初始化成功" };
+  } catch (error) {
+    return { success: false, message: `数据库初始化失败: ${error.message}` };
+  }
+}
+
+/**
+ * 从KV数据存储迁移数据到D1数据库
+ * 仅在首次迁移时执行
+ */
+async function migrateFromKV() {
+  try {
+    // 此函数仅作为参考，实际使用时需要确保URL_REDIRECTS仍然可用
+    // 迁移重定向规则
+    const keys = await URL_REDIRECTS.list();
+    let migratedRedirects = 0;
+    let migratedStats = 0;
+    let migratedLogs = 0;
+
+    // 迁移重定向规则
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      
+      // 跳过特殊键（统计和日志）
+      if (key.startsWith('stats:') || key.startsWith('log:')) {
+        continue;
+      }
+      
+      const url = await URL_REDIRECTS.get(key);
+      if (url) {
+        // 插入到redirects表
+        await DB.prepare(`
+          INSERT OR IGNORE INTO redirects (key, url)
+          VALUES (?, ?)
+        `).bind(key, url).run();
+        migratedRedirects++;
+      }
+    }
+
+    // 迁移统计数据 - 总计数
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      if (key.startsWith('stats:total:')) {
+        const redirectKey = key.replace('stats:total:', '');
+        const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
+        
+        // 插入或更新总计数
+        // 注意：在SQL结构中，总计数可以通过查询visit_logs表获得
+        migratedStats++;
+      }
+    }
+
+    // 迁移每日统计
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      if (key.startsWith('stats:daily:')) {
+        const parts = key.split(':');
+        if (parts.length === 4) {
+          const redirectKey = parts[2];
+          const dateStr = parts[3];
+          const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
+          
+          // 插入每日统计
+          await DB.prepare(`
+            INSERT OR IGNORE INTO daily_stats (redirect_key, date, count)
+            VALUES (?, ?, ?)
+          `).bind(redirectKey, dateStr, count).run();
+          migratedStats++;
+        }
+      }
+    }
+
+    // 迁移地理位置统计
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      if (key.startsWith('stats:geo:')) {
+        const redirectKey = key.replace('stats:geo:', '');
+        const geoStatsStr = await URL_REDIRECTS.get(key);
+        
+        if (geoStatsStr) {
+          try {
+            const geoStats = JSON.parse(geoStatsStr);
+            for (const country in geoStats) {
+              if (Object.prototype.hasOwnProperty.call(geoStats, country)) {
+                // 插入地理位置统计
+                await DB.prepare(`
+                  INSERT OR IGNORE INTO geo_stats (redirect_key, country, count)
+                  VALUES (?, ?, ?)
+                `).bind(redirectKey, country, geoStats[country]).run();
+                migratedStats++;
+              }
+            }
+          } catch (e) {
+            console.error(`解析地理统计数据失败: ${e.message}`);
+          }
+        }
+      }
+    }
+
+    // 类似地，迁移设备、浏览器和操作系统统计
+    // 这里省略具体实现，原理与地理位置统计类似
+
+    // 迁移访问日志
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      if (key.startsWith('log:')) {
+        const logData = await URL_REDIRECTS.get(key);
+        if (logData) {
+          try {
+            const log = JSON.parse(logData);
+            // 插入访问日志
+            await DB.prepare(`
+              INSERT INTO visit_logs (
+                redirect_key, target_url, timestamp, ip_hash, 
+                user_agent, country, region, city, 
+                referer, browser, os, device
+              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).bind(
+              log.key, log.targetUrl, log.timestamp, log.ip,
+              log.userAgent, log.country, log.region, log.city,
+              log.referer, log.browser, log.os, log.device
+            ).run();
+            migratedLogs++;
+          } catch (e) {
+            console.error(`解析日志数据失败: ${e.message}`);
+          }
+        }
+      }
+    }
+
+    return { 
+      success: true, 
+      message: `迁移成功: ${migratedRedirects}个重定向规则, ${migratedStats}条统计记录, ${migratedLogs}条日志` 
+    };
+  } catch (error) {
+    return { success: false, message: `迁移失败: ${error.message}` };
+  }
+}
 
 /**
  * 处理请求的主函数
@@ -20,6 +248,14 @@ async function handleRequest(request) {
   // 检查是否为管理面板请求
   if (path.startsWith('/admin')) {
     return handleAdminRequest(request)
+  }
+  
+  // 检查是否为数据库初始化请求
+  if (path === '/db-init' && request.method === 'POST') {
+    const result = await initDatabase();
+    return new Response(JSON.stringify(result), {
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
   
   // 处理重定向请求
@@ -44,8 +280,12 @@ async function handleRedirectRequest(request) {
   }
   
   try {
-    // 从KV存储中查询重定向URL
-    const redirectUrl = await URL_REDIRECTS.get(key)
+    // 从数据库中查询重定向URL
+    const stmt = DB.prepare(`
+      SELECT url FROM redirects WHERE key = ? LIMIT 1
+    `);
+    const result = await stmt.bind(key).first();
+    const redirectUrl = result ? result.url : null;
     
     // 如果找到对应URL，记录访问日志并执行重定向
     if (redirectUrl) {
@@ -63,6 +303,7 @@ async function handleRedirectRequest(request) {
     }
   } catch (error) {
     // 处理可能的错误
+    console.error('重定向查询错误:', error);
     return new Response('服务器错误: ' + error.message, {
       status: 500,
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
@@ -96,33 +337,24 @@ async function recordVisit(request, key, targetUrl) {
     const os = parseUserAgent(userAgent).os
     const device = parseUserAgent(userAgent).device
     
-    // 构建访问日志对象
-    const visitLog = {
-      timestamp,
-      key,
-      targetUrl,
-      ip: hashIP(ip), // 哈希化IP以保护隐私
-      userAgent,
-      country,
-      region,
-      city,
-      referer,
-      browser,
-      os,
-      device
-    }
+    // 哈希化IP地址以保护隐私
+    const hashedIp = await hashIP(ip)
     
-    // 生成唯一的日志ID
-    const logId = `log:${key}:${Date.now()}:${Math.random().toString(36).substring(2, 15)}`
-    
-    // 保存详细日志
-    await URL_REDIRECTS.put(logId, JSON.stringify(visitLog))
+    // 记录详细访问日志
+    await DB.prepare(`
+      INSERT INTO visit_logs (
+        redirect_key, target_url, timestamp, ip_hash,
+        user_agent, country, region, city,
+        referer, browser, os, device
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      key, targetUrl, timestamp, hashedIp,
+      userAgent, country, region, city,
+      referer, browser, os, device
+    ).run();
     
     // 更新每日计数器
     await updateDailyCounter(key, dateKey)
-    
-    // 更新总计数器
-    await updateTotalCounter(key)
     
     // 更新地理位置统计
     if (country !== 'unknown') {
@@ -144,21 +376,24 @@ async function recordVisit(request, key, targetUrl) {
  * @param {string} dateKey 日期键 (YYYY-MM-DD)
  */
 async function updateDailyCounter(key, dateKey) {
-  const dailyCounterKey = `stats:daily:${key}:${dateKey}`
-  let counter = await URL_REDIRECTS.get(dailyCounterKey)
-  counter = (counter ? parseInt(counter, 10) : 0) + 1
-  await URL_REDIRECTS.put(dailyCounterKey, counter.toString())
-}
-
-/**
- * 更新总访问计数器
- * @param {string} key 重定向key
- */
-async function updateTotalCounter(key) {
-  const totalCounterKey = `stats:total:${key}`
-  let counter = await URL_REDIRECTS.get(totalCounterKey)
-  counter = (counter ? parseInt(counter, 10) : 0) + 1
-  await URL_REDIRECTS.put(totalCounterKey, counter.toString())
+  try {
+    // 尝试更新现有记录
+    const updateResult = await DB.prepare(`
+      UPDATE daily_stats
+      SET count = count + 1
+      WHERE redirect_key = ? AND date = ?
+    `).bind(key, dateKey).run();
+    
+    // 如果没有更新任何记录，说明不存在，则插入新记录
+    if (!updateResult.success || updateResult.meta.changes === 0) {
+      await DB.prepare(`
+        INSERT INTO daily_stats (redirect_key, date, count)
+        VALUES (?, ?, 1)
+      `).bind(key, dateKey).run();
+    }
+  } catch (error) {
+    console.error('更新每日计数器失败:', error);
+  }
 }
 
 /**
@@ -167,21 +402,24 @@ async function updateTotalCounter(key) {
  * @param {string} country 国家代码
  */
 async function updateGeoStats(key, country) {
-  const geoStatsKey = `stats:geo:${key}`
-  let geoStats = await URL_REDIRECTS.get(geoStatsKey)
-  
-  if (geoStats) {
-    try {
-      geoStats = JSON.parse(geoStats)
-      geoStats[country] = (geoStats[country] || 0) + 1
-    } catch (e) {
-      geoStats = { [country]: 1 }
+  try {
+    // 尝试更新现有记录
+    const updateResult = await DB.prepare(`
+      UPDATE geo_stats
+      SET count = count + 1
+      WHERE redirect_key = ? AND country = ?
+    `).bind(key, country).run();
+    
+    // 如果没有更新任何记录，说明不存在，则插入新记录
+    if (!updateResult.success || updateResult.meta.changes === 0) {
+      await DB.prepare(`
+        INSERT INTO geo_stats (redirect_key, country, count)
+        VALUES (?, ?, 1)
+      `).bind(key, country).run();
     }
-  } else {
-    geoStats = { [country]: 1 }
+  } catch (error) {
+    console.error('更新地理位置统计失败:', error);
   }
-  
-  await URL_REDIRECTS.put(geoStatsKey, JSON.stringify(geoStats))
 }
 
 /**
@@ -192,56 +430,48 @@ async function updateGeoStats(key, country) {
  * @param {string} os 操作系统
  */
 async function updateDeviceStats(key, device, browser, os) {
-  // 设备类型统计
-  const deviceStatsKey = `stats:device:${key}`
-  let deviceStats = await URL_REDIRECTS.get(deviceStatsKey)
-  
-  if (deviceStats) {
-    try {
-      deviceStats = JSON.parse(deviceStats)
-      deviceStats[device] = (deviceStats[device] || 0) + 1
-    } catch (e) {
-      deviceStats = { [device]: 1 }
-    }
-  } else {
-    deviceStats = { [device]: 1 }
+  try {
+    // 更新设备类型统计
+    await updateSingleStat('device_stats', key, 'device_type', device);
+    
+    // 更新浏览器统计
+    await updateSingleStat('browser_stats', key, 'browser', browser);
+    
+    // 更新操作系统统计
+    await updateSingleStat('os_stats', key, 'os', os);
+  } catch (error) {
+    console.error('更新设备统计失败:', error);
   }
-  
-  await URL_REDIRECTS.put(deviceStatsKey, JSON.stringify(deviceStats))
-  
-  // 浏览器统计
-  const browserStatsKey = `stats:browser:${key}`
-  let browserStats = await URL_REDIRECTS.get(browserStatsKey)
-  
-  if (browserStats) {
-    try {
-      browserStats = JSON.parse(browserStats)
-      browserStats[browser] = (browserStats[browser] || 0) + 1
-    } catch (e) {
-      browserStats = { [browser]: 1 }
+}
+
+/**
+ * 通用的统计更新函数
+ * @param {string} table 表名
+ * @param {string} key 重定向key
+ * @param {string} field 字段名
+ * @param {string} value 字段值
+ */
+async function updateSingleStat(table, key, field, value) {
+  try {
+    // 尝试更新现有记录
+    const updateQuery = `
+      UPDATE ${table}
+      SET count = count + 1
+      WHERE redirect_key = ? AND ${field} = ?
+    `;
+    const updateResult = await DB.prepare(updateQuery).bind(key, value).run();
+    
+    // 如果没有更新任何记录，说明不存在，则插入新记录
+    if (!updateResult.success || updateResult.meta.changes === 0) {
+      const insertQuery = `
+        INSERT INTO ${table} (redirect_key, ${field}, count)
+        VALUES (?, ?, 1)
+      `;
+      await DB.prepare(insertQuery).bind(key, value).run();
     }
-  } else {
-    browserStats = { [browser]: 1 }
+  } catch (error) {
+    console.error(`更新 ${table} 统计失败:`, error);
   }
-  
-  await URL_REDIRECTS.put(browserStatsKey, JSON.stringify(browserStats))
-  
-  // 操作系统统计
-  const osStatsKey = `stats:os:${key}`
-  let osStats = await URL_REDIRECTS.get(osStatsKey)
-  
-  if (osStats) {
-    try {
-      osStats = JSON.parse(osStats)
-      osStats[os] = (osStats[os] || 0) + 1
-    } catch (e) {
-      osStats = { [os]: 1 }
-    }
-  } else {
-    osStats = { [os]: 1 }
-  }
-  
-  await URL_REDIRECTS.put(osStatsKey, JSON.stringify(osStats))
 }
 
 /**
@@ -1040,27 +1270,19 @@ function serveDashboard(request) {
 
 async function serveAllRedirects(request) {
   try {
-    // 获取KV中的所有键值对
-    // 注意：Cloudflare KV没有直接列出所有键值对的API
-    // 这里使用列出所有键的方法，然后获取每个键对应的值
-    const keys = await URL_REDIRECTS.list();
+    // 使用SQL查询获取所有重定向规则
+    const results = await DB.prepare(`
+      SELECT key, url, created_at 
+      FROM redirects 
+      ORDER BY created_at DESC
+    `).all();
     
-    // 如果没有键，返回空数组
-    if (!keys || !keys.keys || keys.keys.length === 0) {
-      return new Response(JSON.stringify([]), {
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
-    // 获取每个键对应的值
-    const redirects = [];
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      const url = await URL_REDIRECTS.get(key);
-      if (url) {
-        redirects.push({ key, url });
-      }
-    }
+    // 格式化结果
+    const redirects = results.results.map(row => ({
+      key: row.key,
+      url: row.url,
+      createdAt: row.created_at
+    }));
     
     // 返回重定向规则数组
     return new Response(JSON.stringify(redirects), {
@@ -1068,6 +1290,7 @@ async function serveAllRedirects(request) {
     });
   } catch (error) {
     // 处理错误
+    console.error('获取重定向规则失败:', error);
     return new Response(JSON.stringify({ error: '获取重定向规则失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1100,8 +1323,11 @@ async function handleCreateRedirect(request) {
     }
     
     // 检查key是否已存在
-    const existingUrl = await URL_REDIRECTS.get(key);
-    if (existingUrl) {
+    const existingCheck = await DB.prepare(`
+      SELECT key FROM redirects WHERE key = ? LIMIT 1
+    `).bind(key).first();
+    
+    if (existingCheck) {
       return new Response(JSON.stringify({ error: '此key已存在' }), {
         status: 409,
         headers: { 'Content-Type': 'application/json' }
@@ -1109,7 +1335,9 @@ async function handleCreateRedirect(request) {
     }
     
     // 添加新规则
-    await URL_REDIRECTS.put(key, url);
+    await DB.prepare(`
+      INSERT INTO redirects (key, url) VALUES (?, ?)
+    `).bind(key, url).run();
     
     // 返回成功响应
     return new Response(JSON.stringify({ success: true }), {
@@ -1118,6 +1346,7 @@ async function handleCreateRedirect(request) {
     });
   } catch (error) {
     // 处理错误
+    console.error('添加重定向规则失败:', error);
     return new Response(JSON.stringify({ error: '添加重定向规则失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1149,9 +1378,15 @@ async function handleUpdateRedirect(request) {
       });
     }
     
+    // 开始数据库事务
+    // 注意：D1数据库目前不支持完整的事务API，这里模拟事务逻辑
+    
     // 检查原始key是否存在
-    const existingUrl = await URL_REDIRECTS.get(originalKey);
-    if (!existingUrl) {
+    const existingCheck = await DB.prepare(`
+      SELECT key FROM redirects WHERE key = ? LIMIT 1
+    `).bind(originalKey).first();
+    
+    if (!existingCheck) {
       return new Response(JSON.stringify({ error: '原始key不存在' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' }
@@ -1160,20 +1395,62 @@ async function handleUpdateRedirect(request) {
     
     // 如果key已更改，检查新key是否已存在（如果新key不是原始key）
     if (key !== originalKey) {
-      const newKeyExists = await URL_REDIRECTS.get(key);
-      if (newKeyExists) {
+      const newKeyCheck = await DB.prepare(`
+        SELECT key FROM redirects WHERE key = ? LIMIT 1
+      `).bind(key).first();
+      
+      if (newKeyCheck) {
         return new Response(JSON.stringify({ error: '新key已存在' }), {
           status: 409,
           headers: { 'Content-Type': 'application/json' }
         });
       }
       
-      // 如果key已更改，删除旧key
-      await URL_REDIRECTS.delete(originalKey);
+      // 如果key已更改且不存在冲突，执行更新（删除旧记录，创建新记录）
+      await DB.prepare(`
+        DELETE FROM redirects WHERE key = ?
+      `).bind(originalKey).run();
+      
+      await DB.prepare(`
+        INSERT INTO redirects (key, url) VALUES (?, ?)
+      `).bind(key, url).run();
+      
+      // 更新所有相关统计数据的redirect_key
+      // 更新每日统计
+      await DB.prepare(`
+        UPDATE daily_stats SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+      
+      // 更新地理位置统计
+      await DB.prepare(`
+        UPDATE geo_stats SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+      
+      // 更新设备统计
+      await DB.prepare(`
+        UPDATE device_stats SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+      
+      // 更新浏览器统计
+      await DB.prepare(`
+        UPDATE browser_stats SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+      
+      // 更新操作系统统计
+      await DB.prepare(`
+        UPDATE os_stats SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+      
+      // 更新访问日志
+      await DB.prepare(`
+        UPDATE visit_logs SET redirect_key = ? WHERE redirect_key = ?
+      `).bind(key, originalKey).run();
+    } else {
+      // 如果key未更改，只更新url
+      await DB.prepare(`
+        UPDATE redirects SET url = ? WHERE key = ?
+      `).bind(url, key).run();
     }
-    
-    // 更新规则
-    await URL_REDIRECTS.put(key, url);
     
     // 返回成功响应
     return new Response(JSON.stringify({ success: true }), {
@@ -1182,6 +1459,7 @@ async function handleUpdateRedirect(request) {
     });
   } catch (error) {
     // 处理错误
+    console.error('更新重定向规则失败:', error);
     return new Response(JSON.stringify({ error: '更新重定向规则失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1204,8 +1482,11 @@ async function handleDeleteRedirect(request) {
     }
     
     // 检查key是否存在
-    const existingUrl = await URL_REDIRECTS.get(key);
-    if (!existingUrl) {
+    const existingCheck = await DB.prepare(`
+      SELECT key FROM redirects WHERE key = ? LIMIT 1
+    `).bind(key).first();
+    
+    if (!existingCheck) {
       return new Response(JSON.stringify({ error: '此key不存在' }), {
         status: 404,
         headers: { 'Content-Type': 'application/json' }
@@ -1213,7 +1494,19 @@ async function handleDeleteRedirect(request) {
     }
     
     // 删除规则
-    await URL_REDIRECTS.delete(key);
+    await DB.prepare(`
+      DELETE FROM redirects WHERE key = ?
+    `).bind(key).run();
+    
+    // 可选：是否一并删除统计数据和日志（取决于业务需求）
+    // 以下代码会删除与该重定向规则相关的所有统计数据
+    // 如果希望保留历史数据，可以注释掉这些代码
+    await DB.prepare(`DELETE FROM daily_stats WHERE redirect_key = ?`).bind(key).run();
+    await DB.prepare(`DELETE FROM geo_stats WHERE redirect_key = ?`).bind(key).run();
+    await DB.prepare(`DELETE FROM device_stats WHERE redirect_key = ?`).bind(key).run();
+    await DB.prepare(`DELETE FROM browser_stats WHERE redirect_key = ?`).bind(key).run();
+    await DB.prepare(`DELETE FROM os_stats WHERE redirect_key = ?`).bind(key).run();
+    await DB.prepare(`DELETE FROM visit_logs WHERE redirect_key = ?`).bind(key).run();
     
     // 返回成功响应
     return new Response(JSON.stringify({ success: true }), {
@@ -1222,6 +1515,7 @@ async function handleDeleteRedirect(request) {
     });
   } catch (error) {
     // 处理错误
+    console.error('删除重定向规则失败:', error);
     return new Response(JSON.stringify({ error: '删除重定向规则失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1239,65 +1533,93 @@ async function getStatsSummary(request) {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
     
-    // 如果提供了key，返回特定key的摘要
-    if (key) {
-      const totalCounterKey = `stats:total:${key}`
-      const totalCount = await URL_REDIRECTS.get(totalCounterKey) || '0'
-      
-      // 获取过去7天的数据
-      const dailyCounts = []
-      const today = new Date()
-      
-      for (let i = 6; i >= 0; i--) {
-        const date = new Date()
-        date.setDate(today.getDate() - i)
-        const dateKey = date.toISOString().split('T')[0]
-        const dailyCounterKey = `stats:daily:${key}:${dateKey}`
-        const count = await URL_REDIRECTS.get(dailyCounterKey) || '0'
-        dailyCounts.push({
-          date: dateKey,
-          count: parseInt(count, 10)
-        })
-      }
-      
-      return new Response(JSON.stringify({
-        key,
-        totalCount: parseInt(totalCount, 10),
-        dailyCounts
-      }), {
-        headers: { 'Content-Type': 'application/json' }
-      })
-    } 
-    // 否则返回所有key的摘要
-    else {
-      // 获取所有重定向key
-      const keys = await URL_REDIRECTS.list({prefix: ''})
-      const redirectKeys = []
-      
-      // 筛选实际的重定向key (非统计数据key)
-      for (const keyObj of keys.keys) {
-        const k = keyObj.name
-        if (!k.startsWith('stats:') && !k.startsWith('log:')) {
-          redirectKeys.push(k)
-        }
-      }
-      
-      // 获取每个key的总访问量
-      const summary = []
-      for (const k of redirectKeys) {
-        const totalCounterKey = `stats:total:${k}`
-        const totalCount = await URL_REDIRECTS.get(totalCounterKey) || '0'
-        summary.push({
-          key: k,
-          totalCount: parseInt(totalCount, 10)
-        })
-      }
-      
-      return new Response(JSON.stringify(summary), {
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
         headers: { 'Content-Type': 'application/json' }
       })
     }
+    
+    // 检查重定向规则是否存在
+    const redirect = await DB.prepare(`
+      SELECT key, url FROM redirects WHERE key = ? LIMIT 1
+    `).bind(key).first();
+    
+    if (!redirect) {
+      return new Response(JSON.stringify({ error: '未找到此重定向规则' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    // 获取总访问次数
+    const totalVisits = await DB.prepare(`
+      SELECT COUNT(*) as count FROM visit_logs WHERE redirect_key = ?
+    `).bind(key).first();
+    
+    // 获取最近30天的访问次数
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const thirtyDaysAgoStr = thirtyDaysAgo.toISOString();
+    
+    const recentVisits = await DB.prepare(`
+      SELECT COUNT(*) as count FROM visit_logs 
+      WHERE redirect_key = ? AND timestamp >= ?
+    `).bind(key, thirtyDaysAgoStr).first();
+    
+    // 获取今日访问次数
+    const today = new Date().toISOString().split('T')[0];
+    const todayVisits = await DB.prepare(`
+      SELECT count FROM daily_stats 
+      WHERE redirect_key = ? AND date = ?
+    `).bind(key, today).first();
+    
+    // 获取国家分布前5名
+    const countries = await DB.prepare(`
+      SELECT country, count FROM geo_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC LIMIT 5
+    `).bind(key).all();
+    
+    // 获取设备分布
+    const devices = await DB.prepare(`
+      SELECT device_type, count FROM device_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC
+    `).bind(key).all();
+    
+    // 获取浏览器分布前5名
+    const browsers = await DB.prepare(`
+      SELECT browser, count FROM browser_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC LIMIT 5
+    `).bind(key).all();
+    
+    // 获取操作系统分布前5名
+    const operatingSystems = await DB.prepare(`
+      SELECT os, count FROM os_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC LIMIT 5
+    `).bind(key).all();
+    
+    // 构建响应数据
+    const summary = {
+      key: redirect.key,
+      url: redirect.url,
+      totalVisits: totalVisits ? totalVisits.count : 0,
+      last30DaysVisits: recentVisits ? recentVisits.count : 0,
+      todayVisits: todayVisits ? todayVisits.count : 0,
+      topCountries: countries ? countries.results : [],
+      deviceTypes: devices ? devices.results : [],
+      topBrowsers: browsers ? browsers.results : [],
+      topOperatingSystems: operatingSystems ? operatingSystems.results : []
+    }
+    
+    return new Response(JSON.stringify(summary), {
+      headers: { 'Content-Type': 'application/json' }
+    })
   } catch (error) {
+    console.error('获取统计摘要失败:', error);
     return new Response(JSON.stringify({ error: '获取统计摘要失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1323,20 +1645,49 @@ async function getDailyStats(request) {
       })
     }
     
-    // 获取指定天数的每日数据
+    // 生成日期范围
     const dailyCounts = []
     const today = new Date()
     
+    // 查询指定日期范围内的所有记录
+    const datesToQuery = [];
     for (let i = days - 1; i >= 0; i--) {
       const date = new Date()
       date.setDate(today.getDate() - i)
       const dateKey = date.toISOString().split('T')[0]
-      const dailyCounterKey = `stats:daily:${key}:${dateKey}`
-      const count = await URL_REDIRECTS.get(dailyCounterKey) || '0'
+      datesToQuery.push(dateKey);
+    }
+    
+    // 构建日期条件的IN子句
+    const placeholders = datesToQuery.map(() => '?').join(', ');
+    
+    // 使用单个查询获取所有日期的统计数据
+    const query = `
+      SELECT date, count 
+      FROM daily_stats 
+      WHERE redirect_key = ? AND date IN (${placeholders})
+      ORDER BY date ASC
+    `;
+    
+    // 创建绑定数组 [key, ...dates]
+    const bindings = [key, ...datesToQuery];
+    
+    const results = await DB.prepare(query).bind(...bindings).all();
+    
+    // 将结果转换为Map以方便查找
+    const statsMap = new Map();
+    if (results && results.results) {
+      results.results.forEach(row => {
+        statsMap.set(row.date, row.count);
+      });
+    }
+    
+    // 生成完整的日期列表，包括没有记录的日期
+    for (const dateKey of datesToQuery) {
       dailyCounts.push({
         date: dateKey,
-        count: parseInt(count, 10)
-      })
+        count: statsMap.has(dateKey) ? statsMap.get(dateKey) : 0
+      });
     }
     
     return new Response(JSON.stringify({
@@ -1347,6 +1698,7 @@ async function getDailyStats(request) {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取每日统计失败:', error);
     return new Response(JSON.stringify({ error: '获取每日统计失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1371,17 +1723,27 @@ async function getGeoStats(request) {
       })
     }
     
-    const geoStatsKey = `stats:geo:${key}`
-    let geoStats = await URL_REDIRECTS.get(geoStatsKey)
+    // 使用SQL查询获取地理位置统计
+    const results = await DB.prepare(`
+      SELECT country, count 
+      FROM geo_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC
+    `).bind(key).all();
     
-    if (!geoStats) {
-      geoStats = '{}'
+    // 将结果格式化为原来的对象格式
+    const geoStats = {};
+    if (results && results.results) {
+      results.results.forEach(row => {
+        geoStats[row.country] = row.count;
+      });
     }
     
-    return new Response(geoStats, {
+    return new Response(JSON.stringify(geoStats), {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取地理位置统计失败:', error);
     return new Response(JSON.stringify({ error: '获取地理位置统计失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1406,17 +1768,27 @@ async function getDeviceStats(request) {
       })
     }
     
-    const deviceStatsKey = `stats:device:${key}`
-    let deviceStats = await URL_REDIRECTS.get(deviceStatsKey)
+    // 使用SQL查询获取设备类型统计
+    const results = await DB.prepare(`
+      SELECT device_type, count 
+      FROM device_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC
+    `).bind(key).all();
     
-    if (!deviceStats) {
-      deviceStats = '{}'
+    // 将结果格式化为原来的对象格式
+    const deviceStats = {};
+    if (results && results.results) {
+      results.results.forEach(row => {
+        deviceStats[row.device_type] = row.count;
+      });
     }
     
-    return new Response(deviceStats, {
+    return new Response(JSON.stringify(deviceStats), {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取设备类型统计失败:', error);
     return new Response(JSON.stringify({ error: '获取设备类型统计失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1441,17 +1813,27 @@ async function getBrowserStats(request) {
       })
     }
     
-    const browserStatsKey = `stats:browser:${key}`
-    let browserStats = await URL_REDIRECTS.get(browserStatsKey)
+    // 使用SQL查询获取浏览器统计
+    const results = await DB.prepare(`
+      SELECT browser, count 
+      FROM browser_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC
+    `).bind(key).all();
     
-    if (!browserStats) {
-      browserStats = '{}'
+    // 将结果格式化为原来的对象格式
+    const browserStats = {};
+    if (results && results.results) {
+      results.results.forEach(row => {
+        browserStats[row.browser] = row.count;
+      });
     }
     
-    return new Response(browserStats, {
+    return new Response(JSON.stringify(browserStats), {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取浏览器统计失败:', error);
     return new Response(JSON.stringify({ error: '获取浏览器统计失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1476,17 +1858,27 @@ async function getOsStats(request) {
       })
     }
     
-    const osStatsKey = `stats:os:${key}`
-    let osStats = await URL_REDIRECTS.get(osStatsKey)
+    // 使用SQL查询获取操作系统统计
+    const results = await DB.prepare(`
+      SELECT os, count 
+      FROM os_stats 
+      WHERE redirect_key = ? 
+      ORDER BY count DESC
+    `).bind(key).all();
     
-    if (!osStats) {
-      osStats = '{}'
+    // 将结果格式化为原来的对象格式
+    const osStats = {};
+    if (results && results.results) {
+      results.results.forEach(row => {
+        osStats[row.os] = row.count;
+      });
     }
     
-    return new Response(osStats, {
+    return new Response(JSON.stringify(osStats), {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取操作系统统计失败:', error);
     return new Response(JSON.stringify({ error: '获取操作系统统计失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
@@ -1512,36 +1904,23 @@ async function getDetailedLogs(request) {
       })
     }
     
-    // 获取指定key的所有日志
-    const logs = await URL_REDIRECTS.list({ prefix: `log:${key}:` })
-    const logDetails = []
+    // 使用SQL查询获取访问日志
+    const results = await DB.prepare(`
+      SELECT * FROM visit_logs 
+      WHERE redirect_key = ? 
+      ORDER BY timestamp DESC 
+      LIMIT ?
+    `).bind(key, limit).all();
     
-    // 最多获取limit个日志
-    const logsToFetch = logs.keys.slice(0, limit)
-    
-    for (const logKey of logsToFetch) {
-      const logData = await URL_REDIRECTS.get(logKey.name)
-      if (logData) {
-        try {
-          const log = JSON.parse(logData)
-          logDetails.push(log)
-        } catch (e) {
-          console.error('解析日志失败:', e)
-        }
-      }
-    }
-    
-    // 按时间戳排序，最新的在前
-    logDetails.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
-    
+    // 返回日志数据
     return new Response(JSON.stringify({
       key,
-      count: logDetails.length,
-      logs: logDetails
+      logs: results ? results.results : []
     }), {
       headers: { 'Content-Type': 'application/json' }
     })
   } catch (error) {
+    console.error('获取访问日志失败:', error);
     return new Response(JSON.stringify({ error: '获取访问日志失败: ' + error.message }), {
       status: 500,
       headers: { 'Content-Type': 'application/json' }
