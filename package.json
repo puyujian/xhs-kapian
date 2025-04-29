@@ -1,0 +1,20 @@
+{
+  "name": "redirect-system",
+  "version": "1.0.0",
+  "description": "基于Cloudflare Workers的URL重定向系统",
+  "main": "src/index.js",
+  "scripts": {
+    "dev": "wrangler dev",
+    "publish": "wrangler publish",
+    "format": "prettier --write '**/*.{js,css,json,md}'"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "bcryptjs": "^2.4.3"
+  },
+  "devDependencies": {
+    "prettier": "^2.8.4",
+    "wrangler": "^2.12.0"
+  }
+}
