@@ -3,18 +3,21 @@
  * 使用D1 SQL数据库存储和查询重定向规则和访问统计
  */
 
-addEventListener('fetch', event => {
-  event.respondWith(handleRequest(event.request))
-})
+// ES模块格式 - 导出fetch函数作为默认处理入口
+export default {
+  async fetch(request, env, ctx) {
+    return await handleRequest(request, env);
+  }
+};
 
 /**
  * 初始化数据库表结构
  * 只需在首次部署或表结构变更时执行
  */
-async function initDatabase() {
+async function initDatabase(env) {
   try {
     // 创建重定向表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS redirects (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         key TEXT UNIQUE NOT NULL,
@@ -24,7 +27,7 @@ async function initDatabase() {
     `).run();
 
     // 创建访问日志表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS visit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -43,7 +46,7 @@ async function initDatabase() {
     `).run();
 
     // 创建每日统计表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS daily_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -54,7 +57,7 @@ async function initDatabase() {
     `).run();
 
     // 创建地理位置统计表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS geo_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -65,7 +68,7 @@ async function initDatabase() {
     `).run();
 
     // 创建设备类型统计表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS device_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -76,7 +79,7 @@ async function initDatabase() {
     `).run();
 
     // 创建浏览器统计表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS browser_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -87,7 +90,7 @@ async function initDatabase() {
     `).run();
 
     // 创建操作系统统计表
-    await DB.prepare(`
+    await env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS os_stats (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         redirect_key TEXT NOT NULL,
@@ -107,9 +110,17 @@ async function initDatabase() {
  * 从KV数据存储迁移数据到D1数据库
  * 仅在首次迁移时执行
  */
-async function migrateFromKV() {
+async function migrateFromKV(env) {
   try {
     // 此函数仅作为参考，实际使用时需要确保URL_REDIRECTS仍然可用
+    // 如果存在KV绑定，需要从env中访问
+    const URL_REDIRECTS = env.URL_REDIRECTS;
+    
+    // 检查URL_REDIRECTS是否存在
+    if (!URL_REDIRECTS) {
+      return { success: false, message: "URL_REDIRECTS绑定不存在，无法迁移" };
+    }
+    
     // 迁移重定向规则
     const keys = await URL_REDIRECTS.list();
     let migratedRedirects = 0;
@@ -128,7 +139,7 @@ async function migrateFromKV() {
       const url = await URL_REDIRECTS.get(key);
       if (url) {
         // 插入到redirects表
-        await DB.prepare(`
+        await env.DB.prepare(`
           INSERT OR IGNORE INTO redirects (key, url)
           VALUES (?, ?)
         `).bind(key, url).run();
@@ -160,7 +171,7 @@ async function migrateFromKV() {
           const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
           
           // 插入每日统计
-          await DB.prepare(`
+          await env.DB.prepare(`
             INSERT OR IGNORE INTO daily_stats (redirect_key, date, count)
             VALUES (?, ?, ?)
           `).bind(redirectKey, dateStr, count).run();
@@ -182,7 +193,7 @@ async function migrateFromKV() {
             for (const country in geoStats) {
               if (Object.prototype.hasOwnProperty.call(geoStats, country)) {
                 // 插入地理位置统计
-                await DB.prepare(`
+                await env.DB.prepare(`
                   INSERT OR IGNORE INTO geo_stats (redirect_key, country, count)
                   VALUES (?, ?, ?)
                 `).bind(redirectKey, country, geoStats[country]).run();
@@ -208,7 +219,7 @@ async function migrateFromKV() {
           try {
             const log = JSON.parse(logData);
             // 插入访问日志
-            await DB.prepare(`
+            await env.DB.prepare(`
               INSERT INTO visit_logs (
                 redirect_key, target_url, timestamp, ip_hash, 
                 user_agent, country, region, city, 
@@ -239,35 +250,35 @@ async function migrateFromKV() {
 /**
  * 处理请求的主函数
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 响应
  */
-async function handleRequest(request) {
+async function handleRequest(request, env) {
   const url = new URL(request.url)
   const path = url.pathname
   
   // 检查是否为管理面板请求
   if (path.startsWith('/admin')) {
-    return handleAdminRequest(request)
+    return handleAdminRequest(request, env)
   }
   
-  // 检查是否为数据库初始化请求
-  if (path === '/db-init' && request.method === 'POST') {
-    const result = await initDatabase();
-    return new Response(JSON.stringify(result), {
-      headers: { 'Content-Type': 'application/json' }
-    });
+  // 处理API请求
+  if (path.startsWith('/api/')) {
+    // 此处省略具体实现
+    // ...
   }
   
-  // 处理重定向请求
-  return handleRedirectRequest(request)
+  // 处理常规重定向请求
+  return handleRedirectRequest(request, env)
 }
 
 /**
  * 处理重定向请求
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 重定向响应或错误页面
  */
-async function handleRedirectRequest(request) {
+async function handleRedirectRequest(request, env) {
   const url = new URL(request.url)
   const key = url.searchParams.get('key')
   
@@ -281,7 +292,7 @@ async function handleRedirectRequest(request) {
   
   try {
     // 从数据库中查询重定向URL
-    const stmt = DB.prepare(`
+    const stmt = env.DB.prepare(`
       SELECT url FROM redirects WHERE key = ? LIMIT 1
     `);
     const result = await stmt.bind(key).first();
@@ -341,7 +352,7 @@ async function recordVisit(request, key, targetUrl) {
     const hashedIp = await hashIP(ip)
     
     // 记录详细访问日志
-    await DB.prepare(`
+    await env.DB.prepare(`
       INSERT INTO visit_logs (
         redirect_key, target_url, timestamp, ip_hash,
         user_agent, country, region, city,
@@ -378,7 +389,7 @@ async function recordVisit(request, key, targetUrl) {
 async function updateDailyCounter(key, dateKey) {
   try {
     // 尝试更新现有记录
-    const updateResult = await DB.prepare(`
+    const updateResult = await env.DB.prepare(`
       UPDATE daily_stats
       SET count = count + 1
       WHERE redirect_key = ? AND date = ?
@@ -386,7 +397,7 @@ async function updateDailyCounter(key, dateKey) {
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
-      await DB.prepare(`
+      await env.DB.prepare(`
         INSERT INTO daily_stats (redirect_key, date, count)
         VALUES (?, ?, 1)
       `).bind(key, dateKey).run();
@@ -404,7 +415,7 @@ async function updateDailyCounter(key, dateKey) {
 async function updateGeoStats(key, country) {
   try {
     // 尝试更新现有记录
-    const updateResult = await DB.prepare(`
+    const updateResult = await env.DB.prepare(`
       UPDATE geo_stats
       SET count = count + 1
       WHERE redirect_key = ? AND country = ?
@@ -412,7 +423,7 @@ async function updateGeoStats(key, country) {
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
-      await DB.prepare(`
+      await env.DB.prepare(`
         INSERT INTO geo_stats (redirect_key, country, count)
         VALUES (?, ?, 1)
       `).bind(key, country).run();
@@ -459,7 +470,7 @@ async function updateSingleStat(table, key, field, value) {
       SET count = count + 1
       WHERE redirect_key = ? AND ${field} = ?
     `;
-    const updateResult = await DB.prepare(updateQuery).bind(key, value).run();
+    const updateResult = await env.DB.prepare(updateQuery).bind(key, value).run();
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
@@ -467,7 +478,7 @@ async function updateSingleStat(table, key, field, value) {
         INSERT INTO ${table} (redirect_key, ${field}, count)
         VALUES (?, ?, 1)
       `;
-      await DB.prepare(insertQuery).bind(key, value).run();
+      await env.DB.prepare(insertQuery).bind(key, value).run();
     }
   } catch (error) {
     console.error(`更新 ${table} 统计失败:`, error);
@@ -548,54 +559,55 @@ async function hashIP(ip) {
 /**
  * 处理管理面板请求
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 管理面板响应
  */
-async function handleAdminRequest(request) {
+async function handleAdminRequest(request, env) {
   const url = new URL(request.url)
   const path = url.pathname
   
   // 登录页面
   if (path === '/admin' || path === '/admin/') {
-    return serveLoginPage(request)
+    return serveLoginPage(request, env)
   }
   
   // 验证会话
-  const isAuthenticated = await verifySession(request)
+  const isAuthenticated = await verifySession(request, env)
   if (!isAuthenticated) {
     return Response.redirect(`${url.origin}/admin`, 302)
   }
   
   // 根据不同路径提供不同功能
   if (path === '/admin/dashboard') {
-    return serveDashboard(request)
+    return serveDashboard(request, env)
   } else if (path === '/admin/statistics') {
-    return serveStatisticsPage(request)
+    return serveStatisticsPage(request, env)
   } else if (path === '/admin/api/redirects' && request.method === 'GET') {
-    return serveAllRedirects(request)
+    return serveAllRedirects(request, env)
   } else if (path === '/admin/api/redirects' && request.method === 'POST') {
-    return handleCreateRedirect(request)
+    return handleCreateRedirect(request, env)
   } else if (path === '/admin/api/redirects' && request.method === 'PUT') {
-    return handleUpdateRedirect(request)
+    return handleUpdateRedirect(request, env)
   } else if (path === '/admin/api/redirects' && request.method === 'DELETE') {
-    return handleDeleteRedirect(request)
+    return handleDeleteRedirect(request, env)
   } else if (path === '/admin/login' && request.method === 'POST') {
-    return handleLogin(request)
+    return handleLogin(request, env)
   } else if (path === '/admin/logout') {
-    return handleLogout(request)
+    return handleLogout(request, env)
   } else if (path === '/admin/api/stats/summary') {
-    return getStatsSummary(request)
+    return getStatsSummary(request, env)
   } else if (path === '/admin/api/stats/daily') {
-    return getDailyStats(request) 
+    return getDailyStats(request, env) 
   } else if (path === '/admin/api/stats/geo') {
-    return getGeoStats(request)
+    return getGeoStats(request, env)
   } else if (path === '/admin/api/stats/devices') {
-    return getDeviceStats(request)
+    return getDeviceStats(request, env)
   } else if (path === '/admin/api/stats/browsers') {
-    return getBrowserStats(request)
+    return getBrowserStats(request, env)
   } else if (path === '/admin/api/stats/os') {
-    return getOsStats(request)
+    return getOsStats(request, env)
   } else if (path === '/admin/api/stats/logs') {
-    return getDetailedLogs(request)
+    return getDetailedLogs(request, env)
   }
   
   // 不支持的路径返回404
@@ -605,9 +617,10 @@ async function handleAdminRequest(request) {
 /**
  * 验证用户会话
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {boolean} 是否已认证
  */
-async function verifySession(request) {
+async function verifySession(request, env) {
   // 简单的会话验证，检查Cookie中的token
   const cookieHeader = request.headers.get('Cookie') || '';
   console.log('Cookie header:', cookieHeader);
@@ -661,9 +674,10 @@ function parseCookies(cookieString) {
 /**
  * 提供登录页面
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 登录页面
  */
-function serveLoginPage(request) {
+function serveLoginPage(request, env) {
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -810,9 +824,10 @@ function serveLoginPage(request) {
 /**
  * 处理登录请求
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 登录响应
  */
-async function handleLogin(request) {
+async function handleLogin(request, env) {
   // 获取请求数据
   const data = await request.json();
   const { password } = data;
@@ -857,9 +872,10 @@ async function handleLogin(request) {
 /**
  * 处理注销请求
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 注销响应
  */
-function handleLogout(request) {
+function handleLogout(request, env) {
   return new Response('Logged out', {
     status: 302,
     headers: {
@@ -872,9 +888,10 @@ function handleLogout(request) {
 /**
  * 提供仪表板页面
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 仪表板响应
  */
-function serveDashboard(request) {
+function serveDashboard(request, env) {
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -1081,7 +1098,7 @@ function serveDashboard(request) {
 
   <script>
     // 获取所有重定向
-    async function fetchRedirects() {
+    async function fetchRedirects(env) {
       try {
         const response = await fetch('/admin/api/redirects');
         if (!response.ok) {
@@ -1196,7 +1213,7 @@ function serveDashboard(request) {
         }
         
         document.getElementById('redirect-modal').style.display = 'none';
-        fetchRedirects();
+        fetchRedirects(env);
       } catch (error) {
         console.error('Error:', error);
         alert('发生错误，请重试');
@@ -1222,7 +1239,7 @@ function serveDashboard(request) {
         }
         
         document.getElementById('delete-modal').style.display = 'none';
-        fetchRedirects();
+        fetchRedirects(env);
       } catch (error) {
         console.error('Error:', error);
         alert('发生错误，请重试');
@@ -1231,7 +1248,7 @@ function serveDashboard(request) {
     
     // 事件监听器
     document.addEventListener('DOMContentLoaded', function() {
-      fetchRedirects();
+      fetchRedirects(env);
       
       // 添加重定向按钮
       document.getElementById('add-redirect-btn').addEventListener('click', openAddModal);
@@ -1268,10 +1285,10 @@ function serveDashboard(request) {
   });
 }
 
-async function serveAllRedirects(request) {
+async function serveAllRedirects(request, env) {
   try {
     // 使用SQL查询获取所有重定向规则
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT key, url, created_at 
       FROM redirects 
       ORDER BY created_at DESC
@@ -1298,7 +1315,7 @@ async function serveAllRedirects(request) {
   }
 }
 
-async function handleCreateRedirect(request) {
+async function handleCreateRedirect(request, env) {
   try {
     // 获取请求数据
     const data = await request.json();
@@ -1323,7 +1340,7 @@ async function handleCreateRedirect(request) {
     }
     
     // 检查key是否已存在
-    const existingCheck = await DB.prepare(`
+    const existingCheck = await env.DB.prepare(`
       SELECT key FROM redirects WHERE key = ? LIMIT 1
     `).bind(key).first();
     
@@ -1335,7 +1352,7 @@ async function handleCreateRedirect(request) {
     }
     
     // 添加新规则
-    await DB.prepare(`
+    await env.DB.prepare(`
       INSERT INTO redirects (key, url) VALUES (?, ?)
     `).bind(key, url).run();
     
@@ -1354,7 +1371,7 @@ async function handleCreateRedirect(request) {
   }
 }
 
-async function handleUpdateRedirect(request) {
+async function handleUpdateRedirect(request, env) {
   try {
     // 获取请求数据
     const data = await request.json();
@@ -1382,7 +1399,7 @@ async function handleUpdateRedirect(request) {
     // 注意：D1数据库目前不支持完整的事务API，这里模拟事务逻辑
     
     // 检查原始key是否存在
-    const existingCheck = await DB.prepare(`
+    const existingCheck = await env.DB.prepare(`
       SELECT key FROM redirects WHERE key = ? LIMIT 1
     `).bind(originalKey).first();
     
@@ -1395,7 +1412,7 @@ async function handleUpdateRedirect(request) {
     
     // 如果key已更改，检查新key是否已存在（如果新key不是原始key）
     if (key !== originalKey) {
-      const newKeyCheck = await DB.prepare(`
+      const newKeyCheck = await env.DB.prepare(`
         SELECT key FROM redirects WHERE key = ? LIMIT 1
       `).bind(key).first();
       
@@ -1407,47 +1424,47 @@ async function handleUpdateRedirect(request) {
       }
       
       // 如果key已更改且不存在冲突，执行更新（删除旧记录，创建新记录）
-      await DB.prepare(`
+      await env.DB.prepare(`
         DELETE FROM redirects WHERE key = ?
       `).bind(originalKey).run();
       
-      await DB.prepare(`
+      await env.DB.prepare(`
         INSERT INTO redirects (key, url) VALUES (?, ?)
       `).bind(key, url).run();
       
       // 更新所有相关统计数据的redirect_key
       // 更新每日统计
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE daily_stats SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
       
       // 更新地理位置统计
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE geo_stats SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
       
       // 更新设备统计
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE device_stats SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
       
       // 更新浏览器统计
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE browser_stats SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
       
       // 更新操作系统统计
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE os_stats SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
       
       // 更新访问日志
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE visit_logs SET redirect_key = ? WHERE redirect_key = ?
       `).bind(key, originalKey).run();
     } else {
       // 如果key未更改，只更新url
-      await DB.prepare(`
+      await env.DB.prepare(`
         UPDATE redirects SET url = ? WHERE key = ?
       `).bind(url, key).run();
     }
@@ -1467,7 +1484,7 @@ async function handleUpdateRedirect(request) {
   }
 }
 
-async function handleDeleteRedirect(request) {
+async function handleDeleteRedirect(request, env) {
   try {
     // 获取请求数据
     const data = await request.json();
@@ -1482,7 +1499,7 @@ async function handleDeleteRedirect(request) {
     }
     
     // 检查key是否存在
-    const existingCheck = await DB.prepare(`
+    const existingCheck = await env.DB.prepare(`
       SELECT key FROM redirects WHERE key = ? LIMIT 1
     `).bind(key).first();
     
@@ -1494,19 +1511,19 @@ async function handleDeleteRedirect(request) {
     }
     
     // 删除规则
-    await DB.prepare(`
+    await env.DB.prepare(`
       DELETE FROM redirects WHERE key = ?
     `).bind(key).run();
     
     // 可选：是否一并删除统计数据和日志（取决于业务需求）
     // 以下代码会删除与该重定向规则相关的所有统计数据
     // 如果希望保留历史数据，可以注释掉这些代码
-    await DB.prepare(`DELETE FROM daily_stats WHERE redirect_key = ?`).bind(key).run();
-    await DB.prepare(`DELETE FROM geo_stats WHERE redirect_key = ?`).bind(key).run();
-    await DB.prepare(`DELETE FROM device_stats WHERE redirect_key = ?`).bind(key).run();
-    await DB.prepare(`DELETE FROM browser_stats WHERE redirect_key = ?`).bind(key).run();
-    await DB.prepare(`DELETE FROM os_stats WHERE redirect_key = ?`).bind(key).run();
-    await DB.prepare(`DELETE FROM visit_logs WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM daily_stats WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM geo_stats WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM device_stats WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM browser_stats WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM os_stats WHERE redirect_key = ?`).bind(key).run();
+    await env.DB.prepare(`DELETE FROM visit_logs WHERE redirect_key = ?`).bind(key).run();
     
     // 返回成功响应
     return new Response(JSON.stringify({ success: true }), {
@@ -1526,9 +1543,10 @@ async function handleDeleteRedirect(request) {
 /**
  * 获取统计摘要
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 统计摘要数据
  */
-async function getStatsSummary(request) {
+async function getStatsSummary(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1541,7 +1559,7 @@ async function getStatsSummary(request) {
     }
     
     // 检查重定向规则是否存在
-    const redirect = await DB.prepare(`
+    const redirect = await env.DB.prepare(`
       SELECT key, url FROM redirects WHERE key = ? LIMIT 1
     `).bind(key).first();
     
@@ -1553,7 +1571,7 @@ async function getStatsSummary(request) {
     }
     
     // 获取总访问次数
-    const totalVisits = await DB.prepare(`
+    const totalVisits = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visit_logs WHERE redirect_key = ?
     `).bind(key).first();
     
@@ -1562,41 +1580,41 @@ async function getStatsSummary(request) {
     thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
     const thirtyDaysAgoStr = thirtyDaysAgo.toISOString();
     
-    const recentVisits = await DB.prepare(`
+    const recentVisits = await env.DB.prepare(`
       SELECT COUNT(*) as count FROM visit_logs 
       WHERE redirect_key = ? AND timestamp >= ?
     `).bind(key, thirtyDaysAgoStr).first();
     
     // 获取今日访问次数
     const today = new Date().toISOString().split('T')[0];
-    const todayVisits = await DB.prepare(`
+    const todayVisits = await env.DB.prepare(`
       SELECT count FROM daily_stats 
       WHERE redirect_key = ? AND date = ?
     `).bind(key, today).first();
     
     // 获取国家分布前5名
-    const countries = await DB.prepare(`
+    const countries = await env.DB.prepare(`
       SELECT country, count FROM geo_stats 
       WHERE redirect_key = ? 
       ORDER BY count DESC LIMIT 5
     `).bind(key).all();
     
     // 获取设备分布
-    const devices = await DB.prepare(`
+    const devices = await env.DB.prepare(`
       SELECT device_type, count FROM device_stats 
       WHERE redirect_key = ? 
       ORDER BY count DESC
     `).bind(key).all();
     
     // 获取浏览器分布前5名
-    const browsers = await DB.prepare(`
+    const browsers = await env.DB.prepare(`
       SELECT browser, count FROM browser_stats 
       WHERE redirect_key = ? 
       ORDER BY count DESC LIMIT 5
     `).bind(key).all();
     
     // 获取操作系统分布前5名
-    const operatingSystems = await DB.prepare(`
+    const operatingSystems = await env.DB.prepare(`
       SELECT os, count FROM os_stats 
       WHERE redirect_key = ? 
       ORDER BY count DESC LIMIT 5
@@ -1630,9 +1648,10 @@ async function getStatsSummary(request) {
 /**
  * 获取每日统计数据
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 每日统计数据
  */
-async function getDailyStats(request) {
+async function getDailyStats(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1672,7 +1691,7 @@ async function getDailyStats(request) {
     // 创建绑定数组 [key, ...dates]
     const bindings = [key, ...datesToQuery];
     
-    const results = await DB.prepare(query).bind(...bindings).all();
+    const results = await env.DB.prepare(query).bind(...bindings).all();
     
     // 将结果转换为Map以方便查找
     const statsMap = new Map();
@@ -1709,9 +1728,10 @@ async function getDailyStats(request) {
 /**
  * 获取地理位置统计数据
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 地理位置统计数据
  */
-async function getGeoStats(request) {
+async function getGeoStats(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1724,7 +1744,7 @@ async function getGeoStats(request) {
     }
     
     // 使用SQL查询获取地理位置统计
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT country, count 
       FROM geo_stats 
       WHERE redirect_key = ? 
@@ -1754,9 +1774,10 @@ async function getGeoStats(request) {
 /**
  * 获取设备类型统计数据
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 设备类型统计数据
  */
-async function getDeviceStats(request) {
+async function getDeviceStats(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1769,7 +1790,7 @@ async function getDeviceStats(request) {
     }
     
     // 使用SQL查询获取设备类型统计
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT device_type, count 
       FROM device_stats 
       WHERE redirect_key = ? 
@@ -1799,9 +1820,10 @@ async function getDeviceStats(request) {
 /**
  * 获取浏览器统计数据
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 浏览器统计数据
  */
-async function getBrowserStats(request) {
+async function getBrowserStats(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1814,7 +1836,7 @@ async function getBrowserStats(request) {
     }
     
     // 使用SQL查询获取浏览器统计
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT browser, count 
       FROM browser_stats 
       WHERE redirect_key = ? 
@@ -1844,9 +1866,10 @@ async function getBrowserStats(request) {
 /**
  * 获取操作系统统计数据
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 操作系统统计数据
  */
-async function getOsStats(request) {
+async function getOsStats(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1859,7 +1882,7 @@ async function getOsStats(request) {
     }
     
     // 使用SQL查询获取操作系统统计
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT os, count 
       FROM os_stats 
       WHERE redirect_key = ? 
@@ -1889,9 +1912,10 @@ async function getOsStats(request) {
 /**
  * 获取详细访问日志
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 访问日志数据
  */
-async function getDetailedLogs(request) {
+async function getDetailedLogs(request, env) {
   try {
     const url = new URL(request.url)
     const key = url.searchParams.get('key')
@@ -1905,7 +1929,7 @@ async function getDetailedLogs(request) {
     }
     
     // 使用SQL查询获取访问日志
-    const results = await DB.prepare(`
+    const results = await env.DB.prepare(`
       SELECT * FROM visit_logs 
       WHERE redirect_key = ? 
       ORDER BY timestamp DESC 
@@ -1931,9 +1955,10 @@ async function getDetailedLogs(request) {
 /**
  * 提供统计页面
  * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
  * @returns {Response} 统计页面响应
  */
-function serveStatisticsPage(request) {
+function serveStatisticsPage(request, env) {
   const html = `<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2235,7 +2260,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载所有重定向key
-    async function loadRedirectKeys() {
+    async function loadRedirectKeys(env) {
       try {
         const response = await fetch('/admin/api/redirects');
         if (!response.ok) throw new Error('获取重定向记录失败');
@@ -2258,7 +2283,7 @@ function serveStatisticsPage(request) {
         
         // 加载第一个key的数据
         if (redirects.length > 0) {
-          loadStatistics(redirects[0].key);
+          loadStatistics(redirects[0].key, env);
         }
       } catch (error) {
         console.error('加载重定向记录失败:', error);
@@ -2268,18 +2293,18 @@ function serveStatisticsPage(request) {
     }
     
     // 加载统计数据
-    async function loadStatistics(key) {
-      loadSummary(key);
-      loadDailyStats(key);
-      loadGeoStats(key);
-      loadDeviceStats(key);
-      loadBrowserStats(key);
-      loadOsStats(key);
-      loadDetailedLogs(key);
+    async function loadStatistics(key, env) {
+      loadSummary(key, env);
+      loadDailyStats(key, env);
+      loadGeoStats(key, env);
+      loadDeviceStats(key, env);
+      loadBrowserStats(key, env);
+      loadOsStats(key, env);
+      loadDetailedLogs(key, env);
     }
     
     // 加载摘要数据
-    async function loadSummary(key) {
+    async function loadSummary(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/summary?key=\${key}\`);
         if (!response.ok) throw new Error('获取统计摘要失败');
@@ -2311,7 +2336,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载每日统计数据
-    async function loadDailyStats(key) {
+    async function loadDailyStats(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/daily?key=\${key}&days=30\`);
         if (!response.ok) throw new Error('获取每日统计失败');
@@ -2378,7 +2403,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载地理统计数据
-    async function loadGeoStats(key) {
+    async function loadGeoStats(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/geo?key=\${key}\`);
         if (!response.ok) throw new Error('获取地理位置统计失败');
@@ -2428,7 +2453,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载设备类型统计数据
-    async function loadDeviceStats(key) {
+    async function loadDeviceStats(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/devices?key=\${key}\`);
         if (!response.ok) throw new Error('获取设备类型统计失败');
@@ -2475,7 +2500,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载浏览器统计数据
-    async function loadBrowserStats(key) {
+    async function loadBrowserStats(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/browsers?key=\${key}\`);
         if (!response.ok) throw new Error('获取浏览器统计失败');
@@ -2522,7 +2547,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载操作系统统计数据
-    async function loadOsStats(key) {
+    async function loadOsStats(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/os?key=\${key}\`);
         if (!response.ok) throw new Error('获取操作系统统计失败');
@@ -2572,7 +2597,7 @@ function serveStatisticsPage(request) {
     }
     
     // 加载详细访问日志
-    async function loadDetailedLogs(key) {
+    async function loadDetailedLogs(key, env) {
       try {
         const response = await fetch(\`/admin/api/stats/logs?key=\${key}&limit=100\`);
         if (!response.ok) throw new Error('获取访问日志失败');
@@ -2630,13 +2655,13 @@ function serveStatisticsPage(request) {
     // 初始化
     document.addEventListener('DOMContentLoaded', () => {
       setupTabs();
-      loadRedirectKeys();
+      loadRedirectKeys(env);
       
       // 监听key选择变化
       document.getElementById('key-select').addEventListener('change', (e) => {
         const key = e.target.value;
         if (key) {
-          loadStatistics(key);
+          loadStatistics(key, env);
         }
       });
     });
