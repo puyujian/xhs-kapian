@@ -5,7 +5,7 @@ compatibility_date = "2023-09-01"
 # D1数据库绑定
 [[d1_databases]]
 binding = "DB"
-database_name = "url_redirect_db"
+database_name = "xhs"
 database_id = "c1f993fd-defc-4a55-8189-47066ca9a773"
 
 # 环境变量配置
