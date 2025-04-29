@@ -1034,7 +1034,25 @@ async function handleAdminRequest(request, env) {
   // 验证会话
   const isAuthenticated = await verifySession(request, env)
   if (!isAuthenticated) {
-    return Response.redirect(`${url.origin}/admin`, 302)
+    // 检查是否为AJAX请求或API调用
+    const isAjax = request.headers.get('X-Requested-With') === 'XMLHttpRequest' || 
+                 request.headers.get('Accept')?.includes('application/json');
+    
+    if (isAjax) {
+      return new Response(JSON.stringify({
+        success: false,
+        message: "未授权，请重新登录"
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
+    // 否则进行常规重定向
+    return new Response(null, {
+      status: 302,
+      headers: { 'Location': `${url.origin}/admin` }
+    });
   }
   
   // 处理需要验证的调试API
@@ -1373,7 +1391,18 @@ function serveLoginPage(request, env) {
       debugOutput.textContent = '正在检查数据库状态...';
       
       fetch('/admin/api/debug/db')
-      .then(response => response.json())
+      .then(response => {
+        // 检查内容类型
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          return response.json();
+        } else {
+          // 处理非JSON响应
+          return response.text().then(text => {
+            throw new Error('服务器返回了非JSON格式的响应: ' + text.substring(0, 100) + '...');
+          });
+        }
+      })
       .then(data => {
         debugOutput.textContent = JSON.stringify(data, null, 2);
       })
@@ -3312,11 +3341,24 @@ async function handleSessionDebug(request, env) {
  */
 async function handleDatabaseDebug(request, env) {
   try {
+    // 首先验证数据库绑定是否存在
+    if (!env.DB) {
+      return new Response(JSON.stringify({
+        status: "error",
+        error: "数据库绑定不存在",
+        databaseBinding: false,
+        time: new Date().toISOString()
+      }), {
+        status: 500,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+    
     // 检查数据库状态
     const tables = [];
     
-    // 检查数据库版本表
     try {
+      // 检查数据库版本表
       const versionData = await env.DB.prepare(`
         SELECT * FROM db_versions ORDER BY version DESC LIMIT 1
       `).first();
@@ -3345,11 +3387,11 @@ async function handleDatabaseDebug(request, env) {
         status: 200,
         headers: { 'Content-Type': 'application/json' }
       });
-    } catch (error) {
-      // 如果无法查询版本表，可能是因为尚未创建
+    } catch (dbError) {
+      // 数据库查询错误，但仍返回JSON格式
       return new Response(JSON.stringify({
         status: "error",
-        error: "数据库未初始化 - " + error.message,
+        error: "数据库查询错误 - " + dbError.message,
         tables,
         databaseBinding: !!env.DB,
         time: new Date().toISOString()
@@ -3359,10 +3401,10 @@ async function handleDatabaseDebug(request, env) {
       });
     }
   } catch (error) {
-    // 处理整体错误
+    // 处理整体错误，确保始终返回JSON
     return new Response(JSON.stringify({
       status: "error",
-      error: error.message,
+      error: "处理请求时发生错误: " + error.message,
       databaseBinding: !!env.DB,
       time: new Date().toISOString()
     }, null, 2), {
