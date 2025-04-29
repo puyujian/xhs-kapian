@@ -205,6 +205,43 @@ const app = {
       }
     );
   },
+
+  /**
+   * 处理 Cloudflare Cron Triggers 调度事件
+   * @param {ScheduledEvent} event - 调度事件对象
+   * @param {object} env - 环境变量
+   * @param {ExecutionContext} ctx - 执行上下文
+   */
+  async scheduled(event, env, ctx) {
+    console.log(`Cron Trigger 事件触发: ${event.cron}`);
+    
+    // 实例化数据库
+    const db = new Database(env.DB);
+
+    // 计算昨天的日期 (YYYY-MM-DD)
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateToAggregate = yesterday.toISOString().split('T')[0];
+
+    // 执行聚合任务
+    try {
+      // 使用 waitUntil 确保聚合任务在 Worker 返回响应前完成
+      // 或者至少有足够的时间运行
+      ctx.waitUntil(
+        (async () => {
+          const result = await db.aggregateDailyVisits(dateToAggregate);
+          if (result.success) {
+            console.log(`日期 ${dateToAggregate} 聚合成功。聚合记录: ${result.aggregatedCount}, 写入操作: ${result.writeOperations}`);
+          } else {
+            console.error(`日期 ${dateToAggregate} 聚合失败:`, result.error);
+          }
+        })()
+      );
+      console.log(`已启动日期 ${dateToAggregate} 的聚合任务。`);
+    } catch (error) {
+      console.error('启动聚合任务时发生异常:', error);
+    }
+  }
 };
 
 // 处理API请求

@@ -19,6 +19,19 @@ CREATE TABLE visits (
   FOREIGN KEY (redirect_id) REFERENCES redirects(id)
 );
 
+-- 每日访问聚合表
+CREATE TABLE daily_visits_summary (
+  date DATE NOT NULL,
+  redirect_id INTEGER NOT NULL,
+  country TEXT,
+  referer_domain TEXT,
+  browser TEXT,
+  os TEXT,
+  visit_count INTEGER DEFAULT 1 NOT NULL,
+  PRIMARY KEY (date, redirect_id, country, referer_domain, browser, os),
+  FOREIGN KEY (redirect_id) REFERENCES redirects(id)
+);
+
 -- 用户表，存储管理员账户
 CREATE TABLE users (
   id INTEGER PRIMARY KEY,

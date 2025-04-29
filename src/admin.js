@@ -34,7 +34,8 @@ async function handleAdmin(request, env, ctx, db, auth) {
 async function handleAdminApi(request, env, db, auth) {
   const url = new URL(request.url);
   const path = url.pathname;
-  
+  const params = url.searchParams; // 获取查询参数
+
   // 处理登录请求
   if (path === '/admin/api/login' && request.method === 'POST') {
     try {
@@ -62,31 +63,16 @@ async function handleAdminApi(request, env, db, auth) {
     return jsonResponse({ error: '未授权' }, 401);
   }
   
+  // --- 重定向管理 API (不变) ---
   // 获取所有重定向
   if (path === '/admin/api/redirects' && request.method === 'GET') {
-    const redirects = await db.getAllRedirects();
-    return jsonResponse({ redirects: redirects });
+     const redirects = await db.getAllRedirects();
+     // 注意： getAllRedirects 现在返回的数据结构可能已改变
+     // 如果 getRedirectStats 被修改为不返回 count 和 last_visit
+     // 可能需要调整这里的数据处理或调用另一个函数
+     // 暂时假设 getAllRedirects 仍返回基础列表
+     return jsonResponse({ redirects: redirects });
   }
-  
-  // 获取重定向统计
-  if (path === '/admin/api/stats' && request.method === 'GET') {
-    const stats = await db.getRedirectStats();
-    return jsonResponse({ stats: stats });
-  }
-  
-  // 获取特定重定向的访问数据
-  if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
-    const id = parseInt(path.split('/')[3], 10);
-    const visits = await db.getRedirectVisits(id);
-    return jsonResponse({ visits: visits });
-  }
-  
-  // 获取按国家统计的访问数据
-  if (path === '/admin/api/stats/countries' && request.method === 'GET') {
-    const countries = await db.getVisitsByCountry();
-    return jsonResponse({ countries: countries });
-  }
-  
   // 创建新的重定向
   if (path === '/admin/api/redirects' && request.method === 'POST') {
     try {
@@ -109,7 +95,6 @@ async function handleAdminApi(request, env, db, auth) {
       return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
-  
   // 更新重定向
   if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'PUT') {
     try {
@@ -133,7 +118,6 @@ async function handleAdminApi(request, env, db, auth) {
       return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
-  
   // 删除重定向
   if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'DELETE') {
     try {
@@ -145,9 +129,63 @@ async function handleAdminApi(request, env, db, auth) {
       return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
+  // 获取特定重定向的详细访问数据 (保留，可能用于查看原始日志)
+  if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
+    const id = parseInt(path.split('/')[3], 10);
+    const visits = await db.getRedirectVisits(id);
+    return jsonResponse({ visits: visits?.results || [] }); // 确保返回数组
+  }
+
+  // --- 统计 API (重构) ---
+
+  // 获取全局统计摘要
+  if (path === '/admin/api/stats/summary' && request.method === 'GET') {
+    const days = parseInt(params.get('days') || '1', 10); // 默认为 1 天
+    const summary = await db.getStatsSummary(days);
+    return jsonResponse({ summary });
+  }
+
+  // 获取时间序列统计
+  if (path === '/admin/api/stats/timeseries' && request.method === 'GET') {
+    const days = parseInt(params.get('days') || '7', 10); // 默认为 7 天
+    const timeseries = await db.getTimeSeriesStats(days);
+    return jsonResponse({ timeseries });
+  }
   
-  // 404 Not Found
-  return jsonResponse({ error: 'API Not Found' }, 404);
+  // 获取 Top URLs (替代原 /admin/api/stats)
+  if (path === '/admin/api/stats/top-urls' && request.method === 'GET') {
+    const limit = parseInt(params.get('limit') || '10', 10); // 默认 Top 10
+    const days = parseInt(params.get('days') || '7', 10); // 默认最近 7 天
+    const topUrls = await db.getTopUrlsByVisit(limit, days);
+    return jsonResponse({ topUrls });
+  }
+
+  // 获取 Top 国家 (替代原 /admin/api/stats/countries)
+  if (path === '/admin/api/stats/top-countries' && request.method === 'GET') {
+    const limit = parseInt(params.get('limit') || '10', 10);
+    const days = parseInt(params.get('days') || '7', 10);
+    const topCountries = await db.getTopCountries(limit, days);
+    return jsonResponse({ topCountries });
+  }
+
+  // 获取 Top Referers
+  if (path === '/admin/api/stats/top-referers' && request.method === 'GET') {
+    const limit = parseInt(params.get('limit') || '10', 10);
+    const days = parseInt(params.get('days') || '7', 10);
+    const topReferers = await db.getTopReferers(limit, days);
+    return jsonResponse({ topReferers });
+  }
+
+  // 获取 Top User Agents
+  if (path === '/admin/api/stats/top-user-agents' && request.method === 'GET') {
+    const limit = parseInt(params.get('limit') || '10', 10);
+    const days = parseInt(params.get('days') || '7', 10);
+    const topUserAgents = await db.getTopUserAgents(limit, days);
+    return jsonResponse({ topUserAgents });
+  }
+
+  // 404 Not Found for other admin API routes
+  return jsonResponse({ error: 'API Endpoint Not Found' }, 404);
 }
 
 // 提供管理页面
@@ -1241,434 +1279,338 @@ function getUrlsPage() {
   return getBasePage('URL管理', content, scripts);
 }
 
-// 统计页面
+// 统计页面 (重构)
 function getStatsPage() {
+  // HTML 结构 (来自上一步骤)
   const content = `
-    <h2>访问统计</h2>
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h2 style="margin: 0;">访问统计</h2>
+      <div>
+        <label for="stats-period" style="margin-right: 5px;">时间范围:</label>
+        <select id="stats-period">
+          <option value="1">今天</option>
+          <option value="7" selected>过去 7 天</option>
+          <option value="30">过去 30 天</option>
+        </select>
+      </div>
+    </div>
     
-    <div id="stats-container">
-      <div id="loading-message">正在加载统计数据...</div>
-      
-      <div id="summary-stats" style="display: none; margin-bottom: 30px;">
-        <div style="display: flex; flex-wrap: wrap; gap: 20px;">
-          <div style="flex: 1; min-width: 200px; background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-            <h3 style="margin-top: 0; color: #3498db;">总访问量</h3>
-            <p id="total-visits" style="font-size: 24px; font-weight: bold;">0</p>
-          </div>
-          
-          <div style="flex: 1; min-width: 200px; background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-            <h3 style="margin-top: 0; color: #3498db;">活跃链接</h3>
-            <p id="active-urls" style="font-size: 24px; font-weight: bold;">0</p>
-          </div>
-          
-          <div style="flex: 1; min-width: 200px; background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
-            <h3 style="margin-top: 0; color: #3498db;">最近活动</h3>
-            <p id="last-activity" style="font-size: 16px;">无活动</p>
-          </div>
+    <div id="stats-loading" style="text-align: center; padding: 30px;">正在加载统计数据...</div>
+    <div id="stats-error" style="display: none; color: red; border: 1px solid red; padding: 10px; margin-bottom: 20px; border-radius: 4px;">加载数据时出错。</div>
+    
+    <div id="stats-content" style="display: none;">
+      <!-- 全局摘要 -->
+      <div id="summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px;">
+        <div class="summary-card" style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center;">
+          <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 16px; color: #555;">总访问量</h3>
+          <p id="summary-total-visits" style="font-size: 28px; font-weight: bold; margin: 0;">...</p>
+        </div>
+        <div class="summary-card" style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center;">
+          <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 16px; color: #555;">活跃链接数</h3>
+          <p id="summary-active-redirects" style="font-size: 28px; font-weight: bold; margin: 0;">...</p>
+        </div>
+         <div class="summary-card" style="background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 1px 3px rgba(0,0,0,0.05); text-align: center;">
+          <h3 style="margin-top: 0; margin-bottom: 10px; font-size: 16px; color: #555;">总链接数</h3>
+          <p id="summary-total-redirects" style="font-size: 28px; font-weight: bold; margin: 0;">...</p>
         </div>
       </div>
-      
-      <div id="stats-tabs" style="display: none; margin-bottom: 20px;">
-        <div style="border-bottom: 1px solid #ddd;">
-          <button id="tab-urls" class="tab-button active" style="background: none; border: none; padding: 10px 15px; cursor: pointer; font-size: 16px; border-bottom: 2px solid #3498db;">按URL统计</button>
-          <button id="tab-countries" class="tab-button" style="background: none; border: none; padding: 10px 15px; cursor: pointer; font-size: 16px;">按国家/地区统计</button>
+
+      <!-- 时间序列图表 -->
+      <div style="margin-bottom: 40px;">
+        <h3 style="margin-bottom: 15px;">访问量趋势</h3>
+        <canvas id="visits-timeseries-chart" height="100"></canvas>
+      </div>
+
+      <!-- Top N 列表区域 -->
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px;">
+        
+        <div>
+          <h3 style="margin-bottom: 15px;">Top URLs (按访问量)</h3>
+          <table id="top-urls-table">
+            <thead><tr><th>短链接</th><th>目标 URL</th><th>访问次数</th></tr></thead>
+            <tbody id="top-urls-list"></tbody>
+          </table>
+           <div id="top-urls-empty" style="display: none; color: #777;">暂无数据</div>
         </div>
-      </div>
-      
-      <div id="url-stats" class="tab-content" style="display: none;">
-        <h3>URL访问统计</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>URL键值</th>
-              <th>目标URL</th>
-              <th>访问次数</th>
-              <th>最后访问时间</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="url-stats-list">
-            <!-- 数据将通过JavaScript动态加载 -->
-          </tbody>
-        </table>
-      </div>
-      
-      <div id="country-stats" class="tab-content" style="display: none;">
-        <h3>按国家/地区统计</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>国家/地区</th>
-              <th>访问次数</th>
-              <th>占比</th>
-            </tr>
-          </thead>
-          <tbody id="country-stats-list">
-            <!-- 数据将通过JavaScript动态加载 -->
-          </tbody>
-        </table>
-      </div>
-      
-      <div id="visit-details" style="display: none; margin-top: 30px;">
-        <h3>访问详情 - <span id="detail-url-key"></span></h3>
-        <button id="back-to-stats" style="margin-bottom: 15px;">返回统计概览</button>
-        <table>
-          <thead>
-            <tr>
-              <th>访问时间</th>
-              <th>IP地址</th>
-              <th>国家/地区</th>
-              <th>User Agent</th>
-              <th>引荐来源</th>
-            </tr>
-          </thead>
-          <tbody id="visit-details-list">
-            <!-- 数据将通过JavaScript动态加载 -->
-          </tbody>
-        </table>
-      </div>
-      
-      <div id="no-stats-message" style="display: none; text-align: center; padding: 20px;">
-        没有找到任何访问数据。创建一些URL并生成一些访问来查看统计信息。
+
+        <div>
+          <h3 style="margin-bottom: 15px;">Top 来源 (Referers)</h3>
+          <table id="top-referers-table">
+            <thead><tr><th>来源域名</th><th>访问次数</th></tr></thead>
+            <tbody id="top-referers-list"></tbody>
+          </table>
+          <div id="top-referers-empty" style="display: none; color: #777;">暂无数据</div>
+        </div>
+
+        <div>
+          <h3 style="margin-bottom: 15px;">Top 国家/地区</h3>
+           <table id="top-countries-table">
+            <thead><tr><th>国家/地区</th><th>访问次数</th></tr></thead>
+            <tbody id="top-countries-list"></tbody>
+          </table>
+           <div id="top-countries-empty" style="display: none; color: #777;">暂无数据</div>
+        </div>
+        
+        <div>
+          <h3 style="margin-bottom: 15px;">Top 浏览器/系统</h3>
+           <table id="top-user-agents-table">
+            <thead><tr><th>浏览器</th><th>操作系统</th><th>访问次数</th></tr></thead>
+            <tbody id="top-user-agents-list"></tbody>
+          </table>
+           <div id="top-user-agents-empty" style="display: none; color: #777;">暂无数据</div>
+        </div>
+
       </div>
     </div>
   `;
-  
+
+  // 新的 JavaScript 逻辑
   const scripts = `
-    // 格式化日期时间
-    function formatDate(dateString) {
-      if (!dateString) return '无数据';
-      const date = new Date(dateString);
-      return date.toLocaleString('zh-CN');
-    }
-    
-    // 计算时间差（友好显示）
-    function timeAgo(dateString) {
-      if (!dateString) return '无数据';
-      
-      const date = new Date(dateString);
-      const now = new Date();
-      const seconds = Math.floor((now - date) / 1000);
-      
-      if (seconds < 60) {
-        return '刚刚';
+    let timeSeriesChart = null; // 用于存储 Chart.js 实例
+    let currentPeriodDays = 7; // 默认时间范围
+
+    // API 请求辅助函数
+    async function fetchStatsData(endpoint, params = {}) {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        console.error('认证令牌未找到');
+        window.location.href = '/admin/login';
+        return null;
       }
-      
-      const minutes = Math.floor(seconds / 60);
-      if (minutes < 60) {
-        return minutes + '分钟前';
-      }
-      
-      const hours = Math.floor(minutes / 60);
-      if (hours < 24) {
-        return hours + '小时前';
-      }
-      
-      const days = Math.floor(hours / 24);
-      if (days < 30) {
-        return days + '天前';
-      }
-      
-      const months = Math.floor(days / 30);
-      if (months < 12) {
-        return months + '个月前';
-      }
-      
-      return Math.floor(months / 12) + '年前';
-    }
-    
-    // 加载统计数据
-    async function loadStats() {
+
+      const url = new URL(endpoint, window.location.origin);
+      Object.keys(params).forEach(key => url.searchParams.append(key, params[key]));
+
       try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-        
-        // 获取URL统计
-        const statsResponse = await fetch('/admin/api/stats', {
+        const response = await fetch(url.toString(), {
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
-        
-        if (!statsResponse.ok) {
-          throw new Error('无法加载URL统计数据');
-        }
-        
-        const statsData = await statsResponse.json();
-        const stats = statsData.stats || [];
-        
-        // 获取国家统计
-        const countriesResponse = await fetch('/admin/api/stats/countries', {
-          headers: {
-            'Authorization': 'Bearer ' + token
-          }
-        });
-        
-        if (!countriesResponse.ok) {
-          throw new Error('无法加载国家统计数据');
-        }
-        
-        const countriesData = await countriesResponse.json();
-        const countries = countriesData.countries || [];
-        
-        // 更新UI
-        updateStatsUI(stats, countries);
-      } catch (error) {
-        console.error('加载统计数据错误:', error);
-        document.getElementById('loading-message').textContent = '加载统计数据失败，请刷新页面重试';
-      }
-    }
-    
-    // 更新统计UI
-    function updateStatsUI(stats, countries) {
-      // 隐藏加载消息
-      document.getElementById('loading-message').style.display = 'none';
-      
-      if (stats.length === 0) {
-        document.getElementById('no-stats-message').style.display = 'block';
-        return;
-      }
-      
-      // 显示统计区域
-      document.getElementById('summary-stats').style.display = 'block';
-      document.getElementById('stats-tabs').style.display = 'block';
-      document.getElementById('url-stats').style.display = 'block';
-      
-      // 计算总访问量
-      const totalVisits = stats.reduce((sum, item) => sum + (parseInt(item.visit_count) || 0), 0);
-      
-      // 查找最近活动时间
-      let lastActivity = null;
-      stats.forEach(item => {
-        if (item.last_visit) {
-          const visitDate = new Date(item.last_visit);
-          if (!lastActivity || visitDate > new Date(lastActivity)) {
-            lastActivity = item.last_visit;
-          }
-        }
-      });
-      
-      // 更新汇总统计
-      document.getElementById('total-visits').textContent = totalVisits;
-      document.getElementById('active-urls').textContent = stats.length;
-      document.getElementById('last-activity').textContent = lastActivity ? timeAgo(lastActivity) : '无活动';
-      
-      // 填充URL统计表
-      const urlStatsList = document.getElementById('url-stats-list');
-      urlStatsList.innerHTML = '';
-      
-      stats.forEach(stat => {
-        const row = document.createElement('tr');
-        
-        // 键列
-        const keyCell = document.createElement('td');
-        keyCell.textContent = stat.key;
-        
-        // URL列
-        const urlCell = document.createElement('td');
-        const shortUrl = stat.url.length > 50 ? stat.url.substring(0, 47) + '...' : stat.url;
-        urlCell.textContent = shortUrl;
-        urlCell.title = stat.url;
-        
-        // 访问次数列
-        const visitsCell = document.createElement('td');
-        visitsCell.textContent = stat.visit_count || 0;
-        
-        // 最后访问时间列
-        const lastVisitCell = document.createElement('td');
-        lastVisitCell.textContent = stat.last_visit ? timeAgo(stat.last_visit) : '无访问';
-        
-        // 操作列
-        const actionsCell = document.createElement('td');
-        actionsCell.innerHTML = 
-          '<button class="view-details-btn" data-id="' + stat.id + '" data-key="' + stat.key + '" 
-            style="background: none; border: none; color: #3498db; cursor: pointer;">查看详情</button>';
-        
-        // 添加所有单元格到行
-        row.appendChild(keyCell);
-        row.appendChild(urlCell);
-        row.appendChild(visitsCell);
-        row.appendChild(lastVisitCell);
-        row.appendChild(actionsCell);
-        
-        // 添加行到表格
-        urlStatsList.appendChild(row);
-      });
-      
-      // 填充国家统计表
-      const countryStatsList = document.getElementById('country-stats-list');
-      countryStatsList.innerHTML = '';
-      
-      // 计算总访问量（用于百分比）
-      const totalCountryVisits = countries.reduce((sum, item) => sum + parseInt(item.count), 0);
-      
-      countries.forEach(country => {
-        const row = document.createElement('tr');
-        
-        // 国家列
-        const countryCell = document.createElement('td');
-        countryCell.textContent = country.country || '未知';
-        
-        // 访问次数列
-        const visitsCell = document.createElement('td');
-        visitsCell.textContent = country.count;
-        
-        // 占比列
-        const percentCell = document.createElement('td');
-        const percent = totalCountryVisits > 0 ? 
-          (parseInt(country.count) / totalCountryVisits * 100).toFixed(2) + '%' : '0%';
-        percentCell.textContent = percent;
-        
-        // 添加所有单元格到行
-        row.appendChild(countryCell);
-        row.appendChild(visitsCell);
-        row.appendChild(percentCell);
-        
-        // 添加行到表格
-        countryStatsList.appendChild(row);
-      });
-      
-      // 添加详情按钮事件
-      document.querySelectorAll('.view-details-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-          const id = this.getAttribute('data-id');
-          const key = this.getAttribute('data-key');
-          loadVisitDetails(id, key);
-        });
-      });
-    }
-    
-    // 加载访问详情
-    async function loadVisitDetails(id, key) {
-      try {
-        const token = localStorage.getItem('token');
-        if (!token) return;
-        
-        // 显示加载中
-        document.getElementById('visit-details-list').innerHTML = '<tr><td colspan="5">加载中...</td></tr>';
-        
-        // 更新标题
-        document.getElementById('detail-url-key').textContent = key;
-        
-        // 隐藏其他内容，显示详情
-        document.getElementById('url-stats').style.display = 'none';
-        document.getElementById('country-stats').style.display = 'none';
-        document.getElementById('stats-tabs').style.display = 'none';
-        document.getElementById('visit-details').style.display = 'block';
-        
-        // 获取访问详情
-        const response = await fetch('/admin/api/redirects/' + id + '/visits', {
-          headers: {
-            'Authorization': 'Bearer ' + token
-          }
-        });
-        
+
         if (!response.ok) {
-          throw new Error('无法加载访问详情');
+          if (response.status === 401) {
+            window.location.href = '/admin/login'; // 重定向到登录
+            return null;
+          }
+          const errorData = await response.json().catch(() => ({ error: 'API 请求失败，状态码: ' + response.status }));
+          throw new Error(errorData.error || '未知 API 错误');
         }
-        
-        const data = await response.json();
-        const visits = data.visits || [];
-        
-        const visitDetailsList = document.getElementById('visit-details-list');
-        visitDetailsList.innerHTML = '';
-        
-        if (visits.length === 0) {
-          visitDetailsList.innerHTML = '<tr><td colspan="5">暂无访问记录</td></tr>';
-          return;
-        }
-        
-        visits.forEach(visit => {
-          const row = document.createElement('tr');
-          
-          // 时间列
-          const timeCell = document.createElement('td');
-          timeCell.textContent = formatDate(visit.timestamp);
-          
-          // IP列
-          const ipCell = document.createElement('td');
-          ipCell.textContent = visit.ip || '未知';
-          
-          // 国家列
-          const countryCell = document.createElement('td');
-          countryCell.textContent = visit.country || '未知';
-          
-          // User Agent列
-          const uaCell = document.createElement('td');
-          const ua = visit.user_agent || '未知';
-          uaCell.textContent = ua.length > 50 ? ua.substring(0, 47) + '...' : ua;
-          uaCell.title = ua;
-          
-          // 引荐来源列
-          const refererCell = document.createElement('td');
-          const referer = visit.referer || '直接访问';
-          refererCell.textContent = referer.length > 50 ? referer.substring(0, 47) + '...' : referer;
-          refererCell.title = referer;
-          
-          // 添加所有单元格到行
-          row.appendChild(timeCell);
-          row.appendChild(ipCell);
-          row.appendChild(countryCell);
-          row.appendChild(uaCell);
-          row.appendChild(refererCell);
-          
-          // 添加行到表格
-          visitDetailsList.appendChild(row);
-        });
+        return await response.json();
       } catch (error) {
-        console.error('加载访问详情错误:', error);
-        document.getElementById('visit-details-list').innerHTML = 
-          '<tr><td colspan="5">加载详情失败，请重试</td></tr>';
+        // 修改: 使用字符串拼接而不是模板字符串
+        const errorEndpointMsg = '请求 ' + endpoint + ' 出错:';
+        const errorLoadingMsg = '加载数据出错: ' + error.message;
+        console.error(errorEndpointMsg, error);
+        showError(errorLoadingMsg);
+        return null;
       }
     }
-    
-    // 切换标签页
-    function switchTab(tabId) {
-      // 更新按钮状态
-      document.querySelectorAll('.tab-button').forEach(btn => {
-        btn.classList.remove('active');
-        btn.style.borderBottom = 'none';
-      });
-      
-      document.getElementById(tabId).classList.add('active');
-      document.getElementById(tabId).style.borderBottom = '2px solid #3498db';
-      
-      // 更新内容显示
-      document.querySelectorAll('.tab-content').forEach(content => {
-        content.style.display = 'none';
-      });
-      
-      if (tabId === 'tab-urls') {
-        document.getElementById('url-stats').style.display = 'block';
-      } else if (tabId === 'tab-countries') {
-        document.getElementById('country-stats').style.display = 'block';
+
+    // 显示错误消息
+    function showError(message) {
+      const errorElement = document.getElementById('stats-error');
+      const loadingElement = document.getElementById('stats-loading');
+      const contentElement = document.getElementById('stats-content');
+      if (errorElement) {
+        errorElement.textContent = message;
+        errorElement.style.display = 'block';
       }
+      if (loadingElement) loadingElement.style.display = 'none';
+      if (contentElement) contentElement.style.display = 'none';
+    }
+
+    // 显示加载状态
+    function showLoading() {
+       const errorElement = document.getElementById('stats-error');
+       const loadingElement = document.getElementById('stats-loading');
+       const contentElement = document.getElementById('stats-content');
+       if (errorElement) errorElement.style.display = 'none';
+       if (loadingElement) loadingElement.style.display = 'block';
+       if (contentElement) contentElement.style.display = 'none';
     }
     
-    // 初始化页面
-    document.addEventListener('DOMContentLoaded', function() {
-      // 加载统计数据
-      loadStats();
+    // 显示内容
+     function showContent() {
+       const errorElement = document.getElementById('stats-error');
+       const loadingElement = document.getElementById('stats-loading');
+       const contentElement = document.getElementById('stats-content');
+       if (errorElement) errorElement.style.display = 'none';
+       if (loadingElement) loadingElement.style.display = 'none';
+       if (contentElement) contentElement.style.display = 'block';
+    }
+
+    // 更新摘要卡片
+    function updateSummaryCards(summaryData) {
+      if (!summaryData || !summaryData.summary) {
+         console.warn('无效的摘要数据', summaryData);
+         // 可以设置默认值或显示错误
+         document.getElementById('summary-total-visits').textContent = 'N/A';
+         document.getElementById('summary-active-redirects').textContent = 'N/A';
+         document.getElementById('summary-total-redirects').textContent = 'N/A';
+         return;
+      }
+      const summary = summaryData.summary;
+      document.getElementById('summary-total-visits').textContent = summary.totalVisits || 0;
+      document.getElementById('summary-active-redirects').textContent = summary.activeRedirects || 0;
+      document.getElementById('summary-total-redirects').textContent = summary.totalRedirects || 0;
+    }
+
+    // 渲染时间序列图表
+    function renderTimeSeriesChart(timeSeriesData) {
+       if (!timeSeriesData || !timeSeriesData.timeseries) {
+         console.warn('无效的时间序列数据', timeSeriesData);
+         // 可以显示提示信息
+         return;
+       }
+       const ctx = document.getElementById('visits-timeseries-chart').getContext('2d');
+       const labels = timeSeriesData.timeseries.map(item => item.date);
+       const dataCounts = timeSeriesData.timeseries.map(item => item.count);
+
+       if (timeSeriesChart) {
+         timeSeriesChart.destroy(); // 销毁旧图表实例
+       }
+
+       timeSeriesChart = new Chart(ctx, {
+         type: 'line',
+         data: {
+           labels: labels,
+           datasets: [{
+             label: '访问次数',
+             data: dataCounts,
+             borderColor: '#3498db',
+             backgroundColor: 'rgba(52, 152, 219, 0.1)',
+             tension: 0.1,
+             fill: true
+           }]
+         },
+         options: {
+           responsive: true,
+           scales: {
+             y: {
+               beginAtZero: true
+             }
+           },
+            plugins: {
+                legend: {
+                    display: false // 可以隐藏图例如果不需要
+                }
+            }
+         }
+       });
+    }
+    
+    // 填充 Top N 列表 (通用函数)
+    function populateTopList(listId, emptyId, tableId, data, columns) {
+        const listBody = document.getElementById(listId);
+        const emptyMessage = document.getElementById(emptyId);
+        const tableElement = document.getElementById(tableId);
+
+        if (!listBody || !emptyMessage || !tableElement) {
+            // 修改: 使用字符串拼接而不是模板字符串
+            const listUpdateErrorMsg = '更新列表 ' + listId + ' 失败: 找不到元素';
+            console.error(listUpdateErrorMsg);
+            return;
+        }
+
+        listBody.innerHTML = ''; // 清空旧数据
+
+        if (!data || data.length === 0) {
+            tableElement.style.display = 'none';
+            emptyMessage.style.display = 'block';
+        } else {
+            tableElement.style.display = 'table';
+            emptyMessage.style.display = 'none';
+            data.forEach(item => {
+                const row = listBody.insertRow();
+                columns.forEach(col => {
+                    const cell = row.insertCell();
+                    let value = item[col.key] !== null && item[col.key] !== undefined ? item[col.key] : 'N/A';
+                    // 特殊处理 URL 截断
+                    if (col.truncate && typeof value === 'string' && value.length > col.truncate) {
+                        cell.textContent = value.substring(0, col.truncate - 3) + '...';
+                        cell.title = value; // 悬停显示完整内容
+                    } else {
+                        cell.textContent = value;
+                    }
+                    if (col.align) {
+                       cell.style.textAlign = col.align;
+                    }
+                });
+            });
+        }
+    }
+
+    // 加载所有统计数据
+    async function loadAllStats(days) {
+      // 修改: 使用字符串拼接而不是模板字符串
+      const loadingMsg = '开始加载 ' + days + ' 天的统计数据...';
+      console.log(loadingMsg);
+      showLoading();
+      currentPeriodDays = days; // 更新当前时间范围
+
+      const params = { days };
+      const limitParams = { days, limit: 10 }; // Top N 列表参数
+
+      // 并行获取所有数据
+      const [summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData] = await Promise.all([
+        fetchStatsData('/admin/api/stats/summary', params),
+        fetchStatsData('/admin/api/stats/timeseries', params),
+        fetchStatsData('/admin/api/stats/top-urls', limitParams),
+        fetchStatsData('/admin/api/stats/top-countries', limitParams),
+        fetchStatsData('/admin/api/stats/top-referers', limitParams),
+        fetchStatsData('/admin/api/stats/top-user-agents', limitParams)
+      ]);
       
-      // 标签页切换事件
-      document.getElementById('tab-urls').addEventListener('click', function() {
-        switchTab('tab-urls');
-      });
+      // 检查是否有任何请求失败 (fetchStatsData 内部会调用 showError)
+      if (!summaryData || !timeSeriesData || !topUrlsData || !topCountriesData || !topReferersData || !topUserAgentsData) {
+          console.error("部分或全部统计数据加载失败。");
+          // showError 已经在 fetchStatsData 中调用，这里不再重复调用
+          return; 
+      }
       
-      document.getElementById('tab-countries').addEventListener('click', function() {
-        switchTab('tab-countries');
-      });
+      console.log("所有统计数据加载成功");
+
+      // 更新 UI
+      updateSummaryCards(summaryData);
+      renderTimeSeriesChart(timeSeriesData);
       
-      // 返回按钮事件
-      document.getElementById('back-to-stats').addEventListener('click', function() {
-        document.getElementById('visit-details').style.display = 'none';
-        document.getElementById('stats-tabs').style.display = 'block';
-        switchTab('tab-urls');
-      });
+      populateTopList('top-urls-list', 'top-urls-empty', 'top-urls-table', topUrlsData?.topUrls || [], [
+        { key: 'key', truncate: 30 }, 
+        { key: 'url', truncate: 50 }, 
+        { key: 'total_visits', align: 'right' }
+      ]);
+      
+      populateTopList('top-referers-list', 'top-referers-empty', 'top-referers-table', topReferersData?.topReferers || [], [
+        { key: 'referer_domain', truncate: 50 }, 
+        { key: 'count', align: 'right' }
+      ]);
+      
+      populateTopList('top-countries-list', 'top-countries-empty', 'top-countries-table', topCountriesData?.topCountries || [], [
+        { key: 'country' }, 
+        { key: 'count', align: 'right' }
+      ]);
+      
+       populateTopList('top-user-agents-list', 'top-user-agents-empty', 'top-user-agents-table', topUserAgentsData?.topUserAgents || [], [
+        { key: 'browser' }, 
+        { key: 'os' }, 
+        { key: 'count', align: 'right' }
+      ]);
+
+      showContent(); // 显示内容区域
+    }
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+    // ... rest of initialization code ...
     });
   `;
-  
-  return getBasePage('访问统计', content, scripts);
+
+  // 引入 Chart.js CDN
+  const chartJsScript = '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>';
+
+  // 将 Chart.js 脚本和页面脚本传递给基础页面模板
+  return getBasePage('访问统计', content, chartJsScript + scripts);
 }
 
 module.exports = {

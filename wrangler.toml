@@ -15,4 +15,10 @@ ADMIN_PASSWORD = "change_this_to_secure_password"
 [[d1_databases]]
 binding = "DB"
 database_name = "xhs"
-database_id = "2e8061aa-7da5-4d6d-b2ac-a7ffe2ee81e2"  # 需要替换为实际的数据库ID 
+database_id = "2e8061aa-7da5-4d6d-b2ac-a7ffe2ee81e2" # Replace with your actual DB ID
+
+# Cron Triggers for scheduled tasks
+[triggers]
+# "<cron string>" = [ "<schedule name>" ] (optional name)
+# Example: Run daily at 1:00 AM UTC
+crons = [ "0 1 * * *" ] 
