@@ -184,6 +184,7 @@ async function loadAllStats(days) {
   const params = { days };
   const limitParams = { days, limit: 10 }; // Top N 列表参数
 
+  console.log('Initiating Promise.all to fetch stats data...'); // 添加日志
   // 并行获取所有数据
   const [summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData] = await Promise.all([
     fetchStatsData('/admin/api/stats/summary', params),
@@ -194,6 +195,9 @@ async function loadAllStats(days) {
     fetchStatsData('/admin/api/stats/top-user-agents', limitParams)
   ]);
   
+  // 添加日志: 打印接收到的数据
+  console.log('Promise.all finished. Received data:', { summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData });
+
   // 检查是否有任何请求失败 (fetchStatsData 内部会调用 showError)
   if (!summaryData || !timeSeriesData || !topUrlsData || !topCountriesData || !topReferersData || !topUserAgentsData) {
     console.error("部分或全部统计数据加载失败。");
@@ -204,31 +208,45 @@ async function loadAllStats(days) {
   console.log("所有统计数据加载成功");
 
   // 更新 UI
+  console.log('Updating summary cards...'); // 添加日志
   updateSummaryCards(summaryData);
+  console.log('Summary cards updated.'); // 添加日志
+
+  console.log('Rendering time series chart...'); // 添加日志
   renderTimeSeriesChart(timeSeriesData);
+  console.log('Time series chart rendered.'); // 添加日志
   
+  console.log('Populating top URLs list...'); // 添加日志
   populateTopList('top-urls-list', 'top-urls-empty', 'top-urls-table', topUrlsData?.topUrls || [], [
     { key: 'key', truncate: 30 }, 
     { key: 'url', truncate: 50 }, 
     { key: 'total_visits', align: 'right' }
   ]);
+  console.log('Top URLs list populated.'); // 添加日志
   
+  console.log('Populating top referers list...'); // 添加日志
   populateTopList('top-referers-list', 'top-referers-empty', 'top-referers-table', topReferersData?.topReferers || [], [
     { key: 'referer_domain', truncate: 50 }, 
     { key: 'count', align: 'right' }
   ]);
+  console.log('Top referers list populated.'); // 添加日志
   
+  console.log('Populating top countries list...'); // 添加日志
   populateTopList('top-countries-list', 'top-countries-empty', 'top-countries-table', topCountriesData?.topCountries || [], [
     { key: 'country' }, 
     { key: 'count', align: 'right' }
   ]);
+  console.log('Top countries list populated.'); // 添加日志
   
+  console.log('Populating top user agents list...'); // 添加日志
   populateTopList('top-user-agents-list', 'top-user-agents-empty', 'top-user-agents-table', topUserAgentsData?.topUserAgents || [], [
     { key: 'browser' }, 
     { key: 'os' }, 
     { key: 'count', align: 'right' }
   ]);
+  console.log('Top user agents list populated.'); // 添加日志
 
+  console.log('All UI updates complete. Calling showContent...'); // 添加日志
   showContent(); // 显示内容区域
 }
 
