@@ -848,79 +848,85 @@ function getUrlsPage() {
     function refreshUrlsTable() {
       debugLog('刷新URL表格');
       
-      const tableBody = document.getElementById('urls-list');
-      const table = document.getElementById('urls-table');
-      const noUrlsMessage = document.getElementById('no-urls-message');
-      const loadingMessage = document.getElementById('loading-message');
-      
-      if (!tableBody || !table || !noUrlsMessage || !loadingMessage) {
-        debugLog('错误: 找不到表格必要元素');
-        return;
+      try {
+        const tableBody = document.getElementById('urls-list');
+        const table = document.getElementById('urls-table');
+        const noUrlsMessage = document.getElementById('no-urls-message');
+        const loadingMessage = document.getElementById('loading-message');
+        
+        if (!tableBody || !table || !noUrlsMessage || !loadingMessage) {
+          debugLog('错误: 找不到表格必要元素');
+          showError('无法初始化表格界面，请刷新重试。');
+          return;
+        }
+        
+        // 隐藏加载消息
+        loadingMessage.style.display = 'none';
+        
+        if (redirects.length === 0) {
+          table.style.display = 'none';
+          noUrlsMessage.style.display = 'block';
+          return;
+        }
+        
+        table.style.display = 'table';
+        noUrlsMessage.style.display = 'none';
+        
+        // 清空表格
+        tableBody.innerHTML = '';
+        
+        // 填充数据
+        redirects.forEach(redirect => {
+          const row = document.createElement('tr');
+          
+          // 获取统计数据
+          const stat = stats[redirect.id] || {};
+          const visitCount = stat.visit_count || 0;
+          
+          // 短链接列
+          const shortUrlCell = document.createElement('td');
+          const shortUrl = window.location.origin + '/' + redirect.key;
+          shortUrlCell.innerHTML = 
+            '<a href="' + shortUrl + '" target="_blank" title="访问链接">' + redirect.key + '</a>' +
+            '<button class="copy-btn" data-url="' + shortUrl + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 0; font-size: 12px; margin-left: 5px;">复制</button>';
+          
+          // 目标URL列
+          const targetUrlCell = document.createElement('td');
+          targetUrlCell.textContent = redirect.url.length > 50 ? 
+            redirect.url.substring(0, 47) + '...' : redirect.url;
+          targetUrlCell.title = redirect.url;
+          
+          // 创建时间列
+          const createdAtCell = document.createElement('td');
+          createdAtCell.textContent = formatDate(redirect.created_at);
+          
+          // 访问次数列
+          const visitsCell = document.createElement('td');
+          visitsCell.textContent = visitCount;
+          
+          // 操作列
+          const actionsCell = document.createElement('td');
+          actionsCell.innerHTML = 
+            '<button class="edit-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 5px 10px;">编辑</button>' +
+            '<button class="delete-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #e74c3c; cursor: pointer; padding: 5px 10px;">删除</button>';
+          
+          // 添加所有单元格到行
+          row.appendChild(shortUrlCell);
+          row.appendChild(targetUrlCell);
+          row.appendChild(createdAtCell);
+          row.appendChild(visitsCell);
+          row.appendChild(actionsCell);
+          
+          // 添加行到表格
+          tableBody.appendChild(row);
+        });
+        
+        // 添加按钮事件
+        attachButtonEvents();
+      } catch (error) {
+        console.error('渲染表格时出错:', error);
+        showError('渲染表格时出错: ' + error.message + '。请尝试刷新页面。');
       }
-      
-      // 隐藏加载消息
-      loadingMessage.style.display = 'none';
-      
-      if (redirects.length === 0) {
-        table.style.display = 'none';
-        noUrlsMessage.style.display = 'block';
-        return;
-      }
-      
-      table.style.display = 'table';
-      noUrlsMessage.style.display = 'none';
-      
-      // 清空表格
-      tableBody.innerHTML = '';
-      
-      // 填充数据
-      redirects.forEach(redirect => {
-        const row = document.createElement('tr');
-        
-        // 获取统计数据
-        const stat = stats[redirect.id] || {};
-        const visitCount = stat.visit_count || 0;
-        
-        // 短链接列
-        const shortUrlCell = document.createElement('td');
-        const shortUrl = window.location.origin + '/' + redirect.key;
-        shortUrlCell.innerHTML = 
-          '<a href="' + shortUrl + '" target="_blank" title="访问链接">' + redirect.key + '</a>' +
-          '<button class="copy-btn" data-url="' + shortUrl + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 0; font-size: 12px; margin-left: 5px;">复制</button>';
-        
-        // 目标URL列
-        const targetUrlCell = document.createElement('td');
-        targetUrlCell.textContent = redirect.url.length > 50 ? 
-          redirect.url.substring(0, 47) + '...' : redirect.url;
-        targetUrlCell.title = redirect.url;
-        
-        // 创建时间列
-        const createdAtCell = document.createElement('td');
-        createdAtCell.textContent = formatDate(redirect.created_at);
-        
-        // 访问次数列
-        const visitsCell = document.createElement('td');
-        visitsCell.textContent = visitCount;
-        
-        // 操作列
-        const actionsCell = document.createElement('td');
-        actionsCell.innerHTML = 
-          '<button class="edit-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 5px 10px;">编辑</button>' +
-          '<button class="delete-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #e74c3c; cursor: pointer; padding: 5px 10px;">删除</button>';
-        
-        // 添加所有单元格到行
-        row.appendChild(shortUrlCell);
-        row.appendChild(targetUrlCell);
-        row.appendChild(createdAtCell);
-        row.appendChild(visitsCell);
-        row.appendChild(actionsCell);
-        
-        // 添加行到表格
-        tableBody.appendChild(row);
-      });
-      
-      // 添加按钮事件
-      attachButtonEvents();
     }
     
     // 为表格中的按钮添加事件
@@ -1140,6 +1146,9 @@ function getUrlsPage() {
         debugLog('保存请求响应', data);
         
         // 成功保存
+        showMessage(id ? 'URL已成功更新' : 'URL已成功添加', false);
+        toggleForm(false); // 关闭表单
+        await loadUrlData(); // 重新加载数据
         return true;
       } catch (error) {
         console.error('保存URL错误:', error);
@@ -1187,6 +1196,8 @@ function getUrlsPage() {
           debugLog('点击了重试加载按钮');
           loadUrlData();
         });
+      } else {
+        debugLog('错误: 找不到重试按钮');
       }
       
       // 表单提交事件
@@ -1197,72 +1208,38 @@ function getUrlsPage() {
           e.stopPropagation();
           debugLog('提交了URL表单');
           
-          // 显示提交状态
+          // 防止重复提交
           const saveButton = document.getElementById('save-url-btn');
           if (saveButton) {
-            saveButton.textContent = '保存中...';
             saveButton.disabled = true;
+            saveButton.textContent = '正在保存...';
           }
           
           const id = document.getElementById('url-id').value;
-          const key = document.getElementById('url-key').value;
-          const url = document.getElementById('url-target').value;
+          const key = document.getElementById('url-key').value.trim();
+          const url = document.getElementById('url-target').value.trim();
           
-          debugLog('表单数据', { id: id || '新建', key, url });
-          
-          // 清除错误消息
-          const keyError = document.getElementById('key-error');
-          const urlError = document.getElementById('url-error');
-          
-          if (keyError) keyError.textContent = '';
-          if (urlError) urlError.textContent = '';
-          
-          // 简单验证
-          let hasError = false;
-          if (!key.match(/^[a-zA-Z0-9-_]+$/)) {
-            if (keyError) keyError.textContent = '键值只能包含字母、数字、中划线和下划线';
-            hasError = true;
-          }
-          
-          if (!url.match(/^https?:\/\//)) {
-            if (urlError) urlError.textContent = 'URL必须以http://或https://开头';
-            hasError = true;
-          }
-          
-          if (hasError) {
-            // 恢复按钮状态
+          if (!key || !url) {
+            showMessage('键和URL不能为空', true);
+            if (!key) document.getElementById('key-error').textContent = '键不能为空';
+            if (!url) document.getElementById('url-error').textContent = 'URL不能为空';
             if (saveButton) {
-              saveButton.textContent = '保存';
               saveButton.disabled = false;
+              saveButton.textContent = '保存';
             }
             return;
           }
           
-          // 保存数据
-          try {
-            const success = await saveUrlData(id, key, url);
-            
-            if (success) {
-              debugLog('保存成功，关闭表单并刷新数据');
-              toggleForm(false);
-              await loadUrlData();
-              showMessage(id ? 'URL已成功更新' : 'URL已成功创建', false);
-            } else {
-              debugLog('保存失败');
-            }
-          } catch (error) {
-            console.error('表单提交错误:', error);
-            showMessage('提交表单时发生错误: ' + (error.message || '未知错误'), true);
-          } finally {
-            // 恢复按钮状态
-            if (saveButton) {
-              saveButton.textContent = '保存';
-              saveButton.disabled = false;
-            }
+          await saveUrlData(id, key, url);
+          
+          // 恢复按钮状态
+          if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.textContent = '保存';
           }
         });
       } else {
-        debugLog('错误: 找不到URL表单元素');
+        debugLog('错误: 找不到表单或保存按钮');
       }
     }
     
