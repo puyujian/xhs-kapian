@@ -653,13 +653,10 @@ async function handleDatabaseInit(request, env) {
       const isAdmin = await verifySession(request, env);
       if (!isAdmin) {
         console.error('数据库初始化失败: 未授权访问');
-        return new Response(JSON.stringify({ 
+        return createJsonResponse({ 
           success: false, 
           message: "未授权访问"
-        }), {
-          status: 403,
-          headers: { 'Content-Type': 'application/json' }
-        });
+        }, 403);
       }
     } else {
       console.log('跳过授权验证，继续数据库初始化...');
@@ -671,20 +668,14 @@ async function handleDatabaseInit(request, env) {
     const result = await initDatabase(env, force);
     
     // 返回初始化结果
-    return new Response(JSON.stringify(result, null, 2), {
-      status: result.success ? 200 : 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return createJsonResponse(result, result.success ? 200 : 500);
   } catch (error) {
     console.error("数据库初始化错误:", error);
-    return new Response(JSON.stringify({
+    return createJsonResponse({
       success: false,
       message: `数据库初始化失败: ${error.message}`,
       error: error.message
-    }, null, 2), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    }, 500);
   }
 }
 
@@ -698,10 +689,7 @@ async function handleKVMigration(request, env) {
   // 验证管理员权限
   const isAdmin = await verifySession(request, env);
   if (!isAdmin) {
-    return new Response(JSON.stringify({ success: false, message: "未授权" }), {
-      status: 401,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return createJsonResponse({ success: false, message: "未授权" }, 401);
   }
   
   try {
@@ -712,18 +700,12 @@ async function handleKVMigration(request, env) {
     // 执行迁移
     const result = await migrateFromKV(env, options);
     
-    return new Response(JSON.stringify(result), {
-      status: result.success ? 200 : 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    return createJsonResponse(result, result.success ? 200 : 500);
   } catch (error) {
-    return new Response(JSON.stringify({ 
+    return createJsonResponse({ 
       success: false, 
       message: `KV数据迁移失败: ${error.message}` 
-    }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
-    });
+    }, 500);
   }
 }
 
@@ -748,10 +730,10 @@ async function handleRedirectRequest(request, env) {
   try {
     // 从数据库中查询重定向URL
     const stmt = env.DB.prepare(`
-      SELECT url FROM redirects WHERE key = ? LIMIT 1
+      SELECT target_url FROM redirects WHERE id = ? LIMIT 1
     `);
     const result = await stmt.bind(key).first();
-    const redirectUrl = result ? result.url : null;
+    const redirectUrl = result ? result.target_url : null;
     
     // 如果找到对应URL，记录访问日志并执行重定向
     if (redirectUrl) {
@@ -770,10 +752,11 @@ async function handleRedirectRequest(request, env) {
   } catch (error) {
     // 处理可能的错误
     console.error('重定向查询错误:', error);
-    return new Response('服务器错误: ' + error.message, {
-      status: 500,
-      headers: { 'Content-Type': 'text/html; charset=utf-8' }
-    })
+    return createJsonResponse({
+      success: false,
+      message: `服务器错误: ${error.message}`,
+      error: error.message
+    }, 500);
   }
 }
 
@@ -809,14 +792,14 @@ async function recordVisit(request, key, targetUrl) {
     // 记录详细访问日志
     await env.DB.prepare(`
       INSERT INTO visit_logs (
-        redirect_key, target_url, timestamp, ip_hash,
-        user_agent, country, region, city,
-        referer, browser, os, device
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        redirect_id, timestamp, ip,
+        user_agent, referer, country, city,
+        device, browser, os
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      key, targetUrl, timestamp, hashedIp,
-      userAgent, country, region, city,
-      referer, browser, os, device
+      key, timestamp, hashedIp,
+      userAgent, referer, country, city,
+      device, browser, os
     ).run();
     
     // 更新每日计数器
@@ -846,14 +829,14 @@ async function updateDailyCounter(key, dateKey) {
     // 尝试更新现有记录
     const updateResult = await env.DB.prepare(`
       UPDATE daily_stats
-      SET count = count + 1
-      WHERE redirect_key = ? AND date = ?
+      SET visits = visits + 1
+      WHERE redirect_id = ? AND date = ?
     `).bind(key, dateKey).run();
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
       await env.DB.prepare(`
-        INSERT INTO daily_stats (redirect_key, date, count)
+        INSERT INTO daily_stats (redirect_id, date, visits)
         VALUES (?, ?, 1)
       `).bind(key, dateKey).run();
     }
@@ -872,14 +855,14 @@ async function updateGeoStats(key, country) {
     // 尝试更新现有记录
     const updateResult = await env.DB.prepare(`
       UPDATE geo_stats
-      SET count = count + 1
-      WHERE redirect_key = ? AND country = ?
+      SET visits = visits + 1
+      WHERE redirect_id = ? AND country = ?
     `).bind(key, country).run();
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
       await env.DB.prepare(`
-        INSERT INTO geo_stats (redirect_key, country, count)
+        INSERT INTO geo_stats (redirect_id, country, visits)
         VALUES (?, ?, 1)
       `).bind(key, country).run();
     }
@@ -922,15 +905,15 @@ async function updateSingleStat(table, key, field, value) {
     // 尝试更新现有记录
     const updateQuery = `
       UPDATE ${table}
-      SET count = count + 1
-      WHERE redirect_key = ? AND ${field} = ?
+      SET visits = visits + 1
+      WHERE redirect_id = ? AND ${field} = ?
     `;
     const updateResult = await env.DB.prepare(updateQuery).bind(key, value).run();
     
     // 如果没有更新任何记录，说明不存在，则插入新记录
     if (!updateResult.success || updateResult.meta.changes === 0) {
       const insertQuery = `
-        INSERT INTO ${table} (redirect_key, ${field}, count)
+        INSERT INTO ${table} (redirect_id, ${field}, visits)
         VALUES (?, ?, 1)
       `;
       await env.DB.prepare(insertQuery).bind(key, value).run();
@@ -1044,7 +1027,10 @@ async function handleAdminRequest(request, env) {
         message: "未授权，请重新登录"
       }), {
         status: 401,
-        headers: { 'Content-Type': 'application/json' }
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-Content-Type-Options': 'nosniff'
+        }
       });
     }
     
@@ -3327,89 +3313,64 @@ async function handleSessionDebug(request, env) {
   };
   
   // 返回JSON响应
-  return new Response(JSON.stringify(data, null, 2), {
-    status: 200,
-    headers: { 'Content-Type': 'application/json' }
+  return createJsonResponse(data);
+}
+
+/**
+ * 生成标准的JSON响应
+ * @param {Object} data 响应数据
+ * @param {number} status HTTP状态码
+ * @param {Object} additionalHeaders 附加的响应头
+ * @returns {Response} JSON响应
+ */
+function createJsonResponse(data, status = 200, additionalHeaders = {}) {
+  return new Response(JSON.stringify(data), {
+    status: status,
+    headers: { 
+      'Content-Type': 'application/json',
+      'X-Content-Type-Options': 'nosniff',
+      ...additionalHeaders
+    }
   });
 }
 
 /**
- * 处理数据库状态调试API
+ * 处理调试API - 数据库状态
  * @param {Request} request 客户端请求
  * @param {Object} env 环境变量和绑定
- * @returns {Response} 调试信息
+ * @returns {Response} 数据库状态信息
  */
 async function handleDatabaseDebug(request, env) {
   try {
-    // 首先验证数据库绑定是否存在
-    if (!env.DB) {
-      return new Response(JSON.stringify({
-        status: "error",
-        error: "数据库绑定不存在",
-        databaseBinding: false,
-        time: new Date().toISOString()
-      }), {
-        status: 500,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-    
     // 检查数据库状态
-    const tables = [];
+    const dbStatus = await checkAndInitDatabase(env);
     
-    try {
-      // 检查数据库版本表
-      const versionData = await env.DB.prepare(`
-        SELECT * FROM db_versions ORDER BY version DESC LIMIT 1
-      `).first();
-      
-      // 检查其他关键表
-      const tableCheck = await env.DB.prepare(`
-        SELECT name FROM sqlite_master 
-        WHERE type='table'
-      `).all();
-      
-      if (tableCheck.results) {
-        tables.push(...tableCheck.results.map(t => t.name));
-      }
-      
-      // 准备响应数据
-      const data = {
-        status: "ok",
-        initialized: tables.includes('redirects'),
-        tables,
-        version: versionData || "未找到版本信息",
-        databaseBinding: !!env.DB,
-        time: new Date().toISOString()
-      };
-      
-      return new Response(JSON.stringify(data, null, 2), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    } catch (dbError) {
-      // 数据库查询错误，但仍返回JSON格式
-      return new Response(JSON.stringify({
-        status: "error",
-        error: "数据库查询错误 - " + dbError.message,
-        tables,
-        databaseBinding: !!env.DB,
-        time: new Date().toISOString()
-      }, null, 2), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' }
-      });
-    }
-  } catch (error) {
-    // 处理整体错误，确保始终返回JSON
-    return new Response(JSON.stringify({
-      status: "error",
-      error: "处理请求时发生错误: " + error.message,
-      databaseBinding: !!env.DB,
-      time: new Date().toISOString()
-    }, null, 2), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' }
+    // 获取数据库表信息
+    const tables = await env.DB.prepare(`
+      SELECT name, type FROM sqlite_master 
+      WHERE type='table'
+      ORDER BY name
+    `).all();
+    
+    // 获取版本信息
+    const versionInfo = await env.DB.prepare(`
+      SELECT * FROM db_versions 
+      ORDER BY version DESC 
+      LIMIT 1
+    `).first().catch(() => null);
+    
+    return createJsonResponse({
+      success: true,
+      status: dbStatus,
+      tables: tables.results,
+      version: versionInfo
     });
+  } catch (error) {
+    console.error("数据库调试信息获取失败:", error);
+    return createJsonResponse({
+      success: false,
+      message: `获取数据库调试信息失败: ${error.message}`,
+      error: error.message
+    }, 500);
   }
 }
