@@ -69,7 +69,19 @@ const app = {
     }
     
     // 处理重定向
-    const key = path.substring(1); // 移除开头的"/"
+    // 首先从路径中获取key（移除开头的"/"）
+    let key = path.substring(1);
+    
+    // 如果路径中没有key，尝试从查询参数中获取
+    if (!key || key === '') {
+      // 尝试从查询参数中获取key
+      const queryKey = url.searchParams.get('key');
+      if (queryKey) {
+        key = queryKey;
+      }
+    }
+    
+    // 使用key进行重定向
     if (key) {
       const redirect = await db.getRedirectByKey(key);
       
