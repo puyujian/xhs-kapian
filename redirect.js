@@ -379,17 +379,25 @@ async function handleAdminRequest(request) {
  */
 async function verifySession(request) {
   // 简单的会话验证，检查Cookie中的token
-  const cookies = parseCookies(request.headers.get('Cookie') || '')
-  const sessionToken = cookies['admin_session']
+  const cookieHeader = request.headers.get('Cookie') || '';
+  console.log('Cookie header:', cookieHeader);
+  
+  const cookies = parseCookies(cookieHeader);
+  const sessionToken = cookies['admin_session'];
+  
+  console.log('Session token found:', sessionToken ? '是' : '否');
   
   if (!sessionToken) {
-    return false
+    return false;
   }
   
   // 这里使用一个非常简单的会话验证方式
   // 实际生产环境建议使用更安全的会话管理
-  const expectedToken = await generateSessionToken(ADMIN_PASSWORD)
-  return sessionToken === expectedToken
+  const expectedToken = await generateSessionToken(ADMIN_PASSWORD);
+  const tokenMatches = sessionToken === expectedToken;
+  
+  console.log('Token验证:', tokenMatches ? '成功' : '失败');
+  return tokenMatches;
 }
 
 /**
@@ -502,30 +510,63 @@ function serveLoginPage(request) {
   </div>
 
   <script>
-    document.getElementById('login-form').addEventListener('submit', async (e) => {
+    document.getElementById('login-form').addEventListener('submit', function(e) {
       e.preventDefault();
+      
       const password = document.getElementById('password').value;
       const errorElement = document.getElementById('error-message');
       
-      try {
-        const response = await fetch('/admin/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ password })
-        });
+      // 清除之前的错误消息
+      errorElement.textContent = '登录中...';
+      
+      // 发送登录请求
+      fetch('/admin/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ password }),
+        credentials: 'same-origin'
+      })
+      .then(function(response) {
+        console.log('收到响应:', response.status);
         
         if (response.ok) {
-          window.location.href = '/admin/dashboard';
+          // 登录成功
+          return response.json().then(function(data) {
+            errorElement.textContent = '登录成功，正在跳转...';
+            console.log('登录成功');
+            
+            // 使用延迟确保Cookie已被保存
+            setTimeout(function() {
+              const redirectUrl = data.redirect || '/admin/dashboard';
+              window.location.href = redirectUrl;
+            }, 1000);
+          })
+          .catch(function() {
+            // JSON解析错误，仍然尝试重定向
+            errorElement.textContent = '登录成功，正在跳转...';
+            setTimeout(function() {
+              window.location.href = '/admin/dashboard';
+            }, 1000);
+          });
         } else {
-          const data = await response.json();
-          errorElement.textContent = data.error || '登录失败，请重试';
+          // 登录失败
+          return response.json()
+            .then(function(errorData) {
+              errorElement.textContent = errorData.error || '登录失败，请重试';
+              console.error('登录失败:', errorData);
+            })
+            .catch(function() {
+              errorElement.textContent = '登录失败 (' + response.status + ')';
+            });
         }
-      } catch (error) {
-        errorElement.textContent = '发生错误，请重试';
-        console.error('登录错误:', error);
-      }
+      })
+      .catch(function(error) {
+        errorElement.textContent = '网络错误，请检查连接后重试';
+        console.error('登录请求错误:', error);
+      });
     });
   </script>
 </body>
@@ -551,14 +592,29 @@ async function handleLogin(request) {
     // 生成会话token
     const sessionToken = await generateSessionToken(ADMIN_PASSWORD);
     
-    // 设置Cookie并重定向到仪表板
-    return new Response(JSON.stringify({ success: true }), {
-      status: 200,
-      headers: {
-        'Content-Type': 'application/json',
-        'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/admin; Max-Age=3600`,
-      }
-    });
+    // 前端请求使用Accept头区分API调用和直接访问
+    const acceptHeader = request.headers.get('Accept') || '';
+    
+    // 如果是API调用（JSON请求），返回JSON响应
+    if (acceptHeader.includes('application/json')) {
+      return new Response(JSON.stringify({ success: true, redirect: '/admin/dashboard' }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+          'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+        }
+      });
+    } 
+    // 否则直接重定向
+    else {
+      return new Response('Login successful', {
+        status: 302,
+        headers: {
+          'Location': '/admin/dashboard',
+          'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+        }
+      });
+    }
   }
   
   // 密码错误
@@ -578,7 +634,7 @@ function handleLogout(request) {
     status: 302,
     headers: {
       'Location': '/admin',
-      'Set-Cookie': 'admin_session=; HttpOnly; Path=/admin; Max-Age=0',
+      'Set-Cookie': 'admin_session=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0',
     }
   });
 }
