@@ -47,8 +47,12 @@ async function handleRedirectRequest(request) {
     // 从KV存储中查询重定向URL
     const redirectUrl = await URL_REDIRECTS.get(key)
     
-    // 如果找到对应URL，执行重定向
+    // 如果找到对应URL，记录访问日志并执行重定向
     if (redirectUrl) {
+      // 异步记录访问日志，不等待其完成
+      recordVisit(request, key, redirectUrl).catch(console.error)
+      
+      // 执行重定向
       return Response.redirect(redirectUrl, 302)
     } else {
       // 如果未找到对应key，返回404页面
@@ -64,6 +68,251 @@ async function handleRedirectRequest(request) {
       headers: { 'Content-Type': 'text/html; charset=utf-8' }
     })
   }
+}
+
+/**
+ * 记录访问日志
+ * @param {Request} request 客户端请求
+ * @param {string} key 重定向key
+ * @param {string} targetUrl 目标URL
+ */
+async function recordVisit(request, key, targetUrl) {
+  try {
+    // 获取当前时间
+    const now = new Date()
+    const timestamp = now.toISOString()
+    const dateKey = now.toISOString().split('T')[0] // YYYY-MM-DD格式
+    
+    // 从请求中提取信息
+    const cf = request.cf || {} // Cloudflare特有信息
+    const headers = request.headers
+    const ip = headers.get('CF-Connecting-IP') || 'unknown'
+    const userAgent = headers.get('User-Agent') || 'unknown'
+    const referer = headers.get('Referer') || 'direct'
+    const country = cf.country || headers.get('CF-IPCountry') || 'unknown'
+    const region = cf.region || 'unknown'
+    const city = cf.city || 'unknown'
+    const browser = parseUserAgent(userAgent).browser
+    const os = parseUserAgent(userAgent).os
+    const device = parseUserAgent(userAgent).device
+    
+    // 构建访问日志对象
+    const visitLog = {
+      timestamp,
+      key,
+      targetUrl,
+      ip: hashIP(ip), // 哈希化IP以保护隐私
+      userAgent,
+      country,
+      region,
+      city,
+      referer,
+      browser,
+      os,
+      device
+    }
+    
+    // 生成唯一的日志ID
+    const logId = `log:${key}:${Date.now()}:${Math.random().toString(36).substring(2, 15)}`
+    
+    // 保存详细日志
+    await URL_REDIRECTS.put(logId, JSON.stringify(visitLog))
+    
+    // 更新每日计数器
+    await updateDailyCounter(key, dateKey)
+    
+    // 更新总计数器
+    await updateTotalCounter(key)
+    
+    // 更新地理位置统计
+    if (country !== 'unknown') {
+      await updateGeoStats(key, country)
+    }
+    
+    // 更新设备类型统计
+    await updateDeviceStats(key, device, browser, os)
+    
+  } catch (error) {
+    // 记录错误但不影响用户体验
+    console.error('记录访问日志失败:', error)
+  }
+}
+
+/**
+ * 更新每日访问计数器
+ * @param {string} key 重定向key
+ * @param {string} dateKey 日期键 (YYYY-MM-DD)
+ */
+async function updateDailyCounter(key, dateKey) {
+  const dailyCounterKey = `stats:daily:${key}:${dateKey}`
+  let counter = await URL_REDIRECTS.get(dailyCounterKey)
+  counter = (counter ? parseInt(counter, 10) : 0) + 1
+  await URL_REDIRECTS.put(dailyCounterKey, counter.toString())
+}
+
+/**
+ * 更新总访问计数器
+ * @param {string} key 重定向key
+ */
+async function updateTotalCounter(key) {
+  const totalCounterKey = `stats:total:${key}`
+  let counter = await URL_REDIRECTS.get(totalCounterKey)
+  counter = (counter ? parseInt(counter, 10) : 0) + 1
+  await URL_REDIRECTS.put(totalCounterKey, counter.toString())
+}
+
+/**
+ * 更新地理位置统计
+ * @param {string} key 重定向key
+ * @param {string} country 国家代码
+ */
+async function updateGeoStats(key, country) {
+  const geoStatsKey = `stats:geo:${key}`
+  let geoStats = await URL_REDIRECTS.get(geoStatsKey)
+  
+  if (geoStats) {
+    try {
+      geoStats = JSON.parse(geoStats)
+      geoStats[country] = (geoStats[country] || 0) + 1
+    } catch (e) {
+      geoStats = { [country]: 1 }
+    }
+  } else {
+    geoStats = { [country]: 1 }
+  }
+  
+  await URL_REDIRECTS.put(geoStatsKey, JSON.stringify(geoStats))
+}
+
+/**
+ * 更新设备统计
+ * @param {string} key 重定向key
+ * @param {string} device 设备类型
+ * @param {string} browser 浏览器
+ * @param {string} os 操作系统
+ */
+async function updateDeviceStats(key, device, browser, os) {
+  // 设备类型统计
+  const deviceStatsKey = `stats:device:${key}`
+  let deviceStats = await URL_REDIRECTS.get(deviceStatsKey)
+  
+  if (deviceStats) {
+    try {
+      deviceStats = JSON.parse(deviceStats)
+      deviceStats[device] = (deviceStats[device] || 0) + 1
+    } catch (e) {
+      deviceStats = { [device]: 1 }
+    }
+  } else {
+    deviceStats = { [device]: 1 }
+  }
+  
+  await URL_REDIRECTS.put(deviceStatsKey, JSON.stringify(deviceStats))
+  
+  // 浏览器统计
+  const browserStatsKey = `stats:browser:${key}`
+  let browserStats = await URL_REDIRECTS.get(browserStatsKey)
+  
+  if (browserStats) {
+    try {
+      browserStats = JSON.parse(browserStats)
+      browserStats[browser] = (browserStats[browser] || 0) + 1
+    } catch (e) {
+      browserStats = { [browser]: 1 }
+    }
+  } else {
+    browserStats = { [browser]: 1 }
+  }
+  
+  await URL_REDIRECTS.put(browserStatsKey, JSON.stringify(browserStats))
+  
+  // 操作系统统计
+  const osStatsKey = `stats:os:${key}`
+  let osStats = await URL_REDIRECTS.get(osStatsKey)
+  
+  if (osStats) {
+    try {
+      osStats = JSON.parse(osStats)
+      osStats[os] = (osStats[os] || 0) + 1
+    } catch (e) {
+      osStats = { [os]: 1 }
+    }
+  } else {
+    osStats = { [os]: 1 }
+  }
+  
+  await URL_REDIRECTS.put(osStatsKey, JSON.stringify(osStats))
+}
+
+/**
+ * 简化的UserAgent解析函数
+ * @param {string} ua 用户代理字符串
+ * @returns {Object} 解析结果
+ */
+function parseUserAgent(ua) {
+  // 初始默认值
+  const result = {
+    browser: 'unknown',
+    os: 'unknown',
+    device: 'unknown'
+  }
+  
+  // 简化的UserAgent解析逻辑
+  ua = ua.toLowerCase()
+  
+  // 设备类型检测
+  if (ua.includes('mobile')) {
+    result.device = 'mobile'
+  } else if (ua.includes('tablet')) {
+    result.device = 'tablet'
+  } else {
+    result.device = 'desktop'
+  }
+  
+  // 操作系统检测
+  if (ua.includes('windows')) {
+    result.os = 'windows'
+  } else if (ua.includes('mac os') || ua.includes('macos')) {
+    result.os = 'macos'
+  } else if (ua.includes('android')) {
+    result.os = 'android'
+  } else if (ua.includes('ios') || ua.includes('iphone') || ua.includes('ipad')) {
+    result.os = 'ios'
+  } else if (ua.includes('linux')) {
+    result.os = 'linux'
+  }
+  
+  // 浏览器检测
+  if (ua.includes('chrome') && !ua.includes('edg')) {
+    result.browser = 'chrome'
+  } else if (ua.includes('firefox')) {
+    result.browser = 'firefox'
+  } else if (ua.includes('safari') && !ua.includes('chrome')) {
+    result.browser = 'safari'
+  } else if (ua.includes('edg')) {
+    result.browser = 'edge'
+  } else if (ua.includes('opera') || ua.includes('opr')) {
+    result.browser = 'opera'
+  } else if (ua.includes('msie') || ua.includes('trident')) {
+    result.browser = 'ie'
+  }
+  
+  return result
+}
+
+/**
+ * 对IP地址进行哈希处理以保护隐私
+ * @param {string} ip IP地址
+ * @returns {string} 哈希值
+ */
+async function hashIP(ip) {
+  // 在实际应用中，可以使用更安全的方法，这里简化处理
+  // 例如，可以只保留IP的前两段，或使用加盐哈希
+  const ipParts = ip.split('.')
+  if (ipParts.length === 4) {
+    return `${ipParts[0]}.${ipParts[1]}.*.*`
+  }
+  return 'unknown'
 }
 
 /**
@@ -89,6 +338,8 @@ async function handleAdminRequest(request) {
   // 根据不同路径提供不同功能
   if (path === '/admin/dashboard') {
     return serveDashboard(request)
+  } else if (path === '/admin/statistics') {
+    return serveStatisticsPage(request)
   } else if (path === '/admin/api/redirects' && request.method === 'GET') {
     return serveAllRedirects(request)
   } else if (path === '/admin/api/redirects' && request.method === 'POST') {
@@ -101,6 +352,20 @@ async function handleAdminRequest(request) {
     return handleLogin(request)
   } else if (path === '/admin/logout') {
     return handleLogout(request)
+  } else if (path === '/admin/api/stats/summary') {
+    return getStatsSummary(request)
+  } else if (path === '/admin/api/stats/daily') {
+    return getDailyStats(request) 
+  } else if (path === '/admin/api/stats/geo') {
+    return getGeoStats(request)
+  } else if (path === '/admin/api/stats/devices') {
+    return getDeviceStats(request)
+  } else if (path === '/admin/api/stats/browsers') {
+    return getBrowserStats(request)
+  } else if (path === '/admin/api/stats/os') {
+    return getOsStats(request)
+  } else if (path === '/admin/api/stats/logs') {
+    return getDetailedLogs(request)
   }
   
   // 不支持的路径返回404
@@ -354,6 +619,19 @@ function serveDashboard(request) {
     h1 {
       margin: 0;
     }
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+    }
+    .nav-link {
+      color: white;
+      text-decoration: none;
+      padding: 0.5rem;
+      border-radius: 4px;
+    }
+    .nav-link:hover {
+      background-color: rgba(255, 255, 255, 0.2);
+    }
     table {
       width: 100%;
       border-collapse: collapse;
@@ -398,15 +676,11 @@ function serveDashboard(request) {
       display: flex;
       gap: 0.5rem;
     }
-    .logout {
-      color: white;
-      text-decoration: none;
-      padding: 0.5rem 1rem;
-      border-radius: 4px;
-      background-color: rgba(255, 255, 255, 0.1);
-    }
-    .logout:hover {
-      background-color: rgba(255, 255, 255, 0.2);
+    .add-btn-container {
+      margin-bottom: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     .modal {
       display: none;
@@ -450,21 +724,21 @@ function serveDashboard(request) {
       border-radius: 4px;
       box-sizing: border-box;
     }
-    .add-btn-container {
-      margin-bottom: 1rem;
-      display: flex;
-      justify-content: flex-end;
-    }
   </style>
 </head>
 <body>
   <header>
     <h1>URL重定向管理面板</h1>
-    <a href="/admin/logout" class="logout">注销</a>
+    <div class="nav-links">
+      <a href="/admin/dashboard" class="nav-link">重定向管理</a>
+      <a href="/admin/statistics" class="nav-link">统计分析</a>
+      <a href="/admin/logout" class="nav-link">注销</a>
+    </div>
   </header>
   
   <div class="container">
     <div class="add-btn-container">
+      <h2>重定向规则管理</h2>
       <button class="btn btn-primary" id="add-redirect-btn">添加新重定向</button>
     </div>
     
@@ -553,6 +827,7 @@ function serveDashboard(request) {
           <td class="actions">
             <button class="btn btn-secondary edit-btn" data-key="\${redirect.key}" data-url="\${redirect.url}">编辑</button>
             <button class="btn btn-danger delete-btn" data-key="\${redirect.key}">删除</button>
+            <a href="/admin/statistics?key=\${redirect.key}" class="btn btn-primary">统计</a>
           </td>
         \`;
         tbody.appendChild(row);
@@ -896,4 +1171,1045 @@ async function handleDeleteRedirect(request) {
       headers: { 'Content-Type': 'application/json' }
     });
   }
+}
+
+/**
+ * 获取统计摘要
+ * @param {Request} request 客户端请求
+ * @returns {Response} 统计摘要数据
+ */
+async function getStatsSummary(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    
+    // 如果提供了key，返回特定key的摘要
+    if (key) {
+      const totalCounterKey = `stats:total:${key}`
+      const totalCount = await URL_REDIRECTS.get(totalCounterKey) || '0'
+      
+      // 获取过去7天的数据
+      const dailyCounts = []
+      const today = new Date()
+      
+      for (let i = 6; i >= 0; i--) {
+        const date = new Date()
+        date.setDate(today.getDate() - i)
+        const dateKey = date.toISOString().split('T')[0]
+        const dailyCounterKey = `stats:daily:${key}:${dateKey}`
+        const count = await URL_REDIRECTS.get(dailyCounterKey) || '0'
+        dailyCounts.push({
+          date: dateKey,
+          count: parseInt(count, 10)
+        })
+      }
+      
+      return new Response(JSON.stringify({
+        key,
+        totalCount: parseInt(totalCount, 10),
+        dailyCounts
+      }), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    } 
+    // 否则返回所有key的摘要
+    else {
+      // 获取所有重定向key
+      const keys = await URL_REDIRECTS.list({prefix: ''})
+      const redirectKeys = []
+      
+      // 筛选实际的重定向key (非统计数据key)
+      for (const keyObj of keys.keys) {
+        const k = keyObj.name
+        if (!k.startsWith('stats:') && !k.startsWith('log:')) {
+          redirectKeys.push(k)
+        }
+      }
+      
+      // 获取每个key的总访问量
+      const summary = []
+      for (const k of redirectKeys) {
+        const totalCounterKey = `stats:total:${k}`
+        const totalCount = await URL_REDIRECTS.get(totalCounterKey) || '0'
+        summary.push({
+          key: k,
+          totalCount: parseInt(totalCount, 10)
+        })
+      }
+      
+      return new Response(JSON.stringify(summary), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取统计摘要失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取每日统计数据
+ * @param {Request} request 客户端请求
+ * @returns {Response} 每日统计数据
+ */
+async function getDailyStats(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    const days = parseInt(url.searchParams.get('days') || '30', 10)
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    // 获取指定天数的每日数据
+    const dailyCounts = []
+    const today = new Date()
+    
+    for (let i = days - 1; i >= 0; i--) {
+      const date = new Date()
+      date.setDate(today.getDate() - i)
+      const dateKey = date.toISOString().split('T')[0]
+      const dailyCounterKey = `stats:daily:${key}:${dateKey}`
+      const count = await URL_REDIRECTS.get(dailyCounterKey) || '0'
+      dailyCounts.push({
+        date: dateKey,
+        count: parseInt(count, 10)
+      })
+    }
+    
+    return new Response(JSON.stringify({
+      key,
+      days,
+      dailyCounts
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取每日统计失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取地理位置统计数据
+ * @param {Request} request 客户端请求
+ * @returns {Response} 地理位置统计数据
+ */
+async function getGeoStats(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    const geoStatsKey = `stats:geo:${key}`
+    let geoStats = await URL_REDIRECTS.get(geoStatsKey)
+    
+    if (!geoStats) {
+      geoStats = '{}'
+    }
+    
+    return new Response(geoStats, {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取地理位置统计失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取设备类型统计数据
+ * @param {Request} request 客户端请求
+ * @returns {Response} 设备类型统计数据
+ */
+async function getDeviceStats(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    const deviceStatsKey = `stats:device:${key}`
+    let deviceStats = await URL_REDIRECTS.get(deviceStatsKey)
+    
+    if (!deviceStats) {
+      deviceStats = '{}'
+    }
+    
+    return new Response(deviceStats, {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取设备类型统计失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取浏览器统计数据
+ * @param {Request} request 客户端请求
+ * @returns {Response} 浏览器统计数据
+ */
+async function getBrowserStats(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    const browserStatsKey = `stats:browser:${key}`
+    let browserStats = await URL_REDIRECTS.get(browserStatsKey)
+    
+    if (!browserStats) {
+      browserStats = '{}'
+    }
+    
+    return new Response(browserStats, {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取浏览器统计失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取操作系统统计数据
+ * @param {Request} request 客户端请求
+ * @returns {Response} 操作系统统计数据
+ */
+async function getOsStats(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    const osStatsKey = `stats:os:${key}`
+    let osStats = await URL_REDIRECTS.get(osStatsKey)
+    
+    if (!osStats) {
+      osStats = '{}'
+    }
+    
+    return new Response(osStats, {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取操作系统统计失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 获取详细访问日志
+ * @param {Request} request 客户端请求
+ * @returns {Response} 访问日志数据
+ */
+async function getDetailedLogs(request) {
+  try {
+    const url = new URL(request.url)
+    const key = url.searchParams.get('key')
+    const limit = parseInt(url.searchParams.get('limit') || '100', 10)
+    
+    if (!key) {
+      return new Response(JSON.stringify({ error: '需要提供key参数' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+    
+    // 获取指定key的所有日志
+    const logs = await URL_REDIRECTS.list({ prefix: `log:${key}:` })
+    const logDetails = []
+    
+    // 最多获取limit个日志
+    const logsToFetch = logs.keys.slice(0, limit)
+    
+    for (const logKey of logsToFetch) {
+      const logData = await URL_REDIRECTS.get(logKey.name)
+      if (logData) {
+        try {
+          const log = JSON.parse(logData)
+          logDetails.push(log)
+        } catch (e) {
+          console.error('解析日志失败:', e)
+        }
+      }
+    }
+    
+    // 按时间戳排序，最新的在前
+    logDetails.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp))
+    
+    return new Response(JSON.stringify({
+      key,
+      count: logDetails.length,
+      logs: logDetails
+    }), {
+      headers: { 'Content-Type': 'application/json' }
+    })
+  } catch (error) {
+    return new Response(JSON.stringify({ error: '获取访问日志失败: ' + error.message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    })
+  }
+}
+
+/**
+ * 提供统计页面
+ * @param {Request} request 客户端请求
+ * @returns {Response} 统计页面响应
+ */
+function serveStatisticsPage(request) {
+  const html = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL重定向服务 - 访问统计</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/luxon@2.3.1/build/global/luxon.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-luxon@1.1.0/dist/chartjs-adapter-luxon.min.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      line-height: 1.6;
+      margin: 0;
+      padding: 0;
+      background-color: #f5f5f5;
+    }
+    header {
+      background-color: #0070f3;
+      color: white;
+      padding: 1rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 1rem;
+    }
+    h1, h2, h3 {
+      margin: 0;
+    }
+    .nav-links {
+      display: flex;
+      gap: 1rem;
+    }
+    .nav-link {
+      color: white;
+      text-decoration: none;
+      padding: 0.5rem;
+      border-radius: 4px;
+    }
+    .nav-link:hover {
+      background-color: rgba(255, 255, 255, 0.2);
+    }
+    .card {
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+      padding: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    .stats-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+    .stats-select {
+      padding: 0.5rem;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+    }
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .stat-box {
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+      padding: 1rem;
+      text-align: center;
+    }
+    .stat-number {
+      font-size: 2rem;
+      font-weight: bold;
+      margin: 0.5rem 0;
+      color: #0070f3;
+    }
+    .stat-label {
+      color: #666;
+      font-size: 0.9rem;
+    }
+    .chart-container {
+      position: relative;
+      height: 300px;
+      margin-bottom: 1.5rem;
+    }
+    .chart-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 1.5rem;
+      margin-bottom: 1.5rem;
+    }
+    @media (max-width: 768px) {
+      .chart-row {
+        grid-template-columns: 1fr;
+      }
+    }
+    .table-container {
+      overflow-x: auto;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+    th, td {
+      padding: 0.8rem;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    th {
+      background-color: #f2f2f2;
+      font-weight: bold;
+    }
+    tr:hover {
+      background-color: #f9f9f9;
+    }
+    .tab-container {
+      margin-bottom: 1.5rem;
+    }
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #ddd;
+      margin-bottom: 1rem;
+    }
+    .tab {
+      padding: 0.8rem 1.5rem;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+    }
+    .tab.active {
+      border-bottom: 2px solid #0070f3;
+      color: #0070f3;
+    }
+    .tab-content {
+      display: none;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    .loading {
+      text-align: center;
+      padding: 2rem;
+      color: #666;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>URL重定向统计分析</h1>
+    <div class="nav-links">
+      <a href="/admin/dashboard" class="nav-link">重定向管理</a>
+      <a href="/admin/statistics" class="nav-link">统计分析</a>
+      <a href="/admin/logout" class="nav-link">注销</a>
+    </div>
+  </header>
+  
+  <div class="container">
+    <div class="stats-header">
+      <h2>访问数据分析</h2>
+      <select id="key-select" class="stats-select">
+        <option value="">正在加载...</option>
+      </select>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-box">
+        <div class="stat-label">总访问量</div>
+        <div id="total-visits" class="stat-number">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">今日访问量</div>
+        <div id="today-visits" class="stat-number">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">本周访问量</div>
+        <div id="weekly-visits" class="stat-number">-</div>
+      </div>
+      <div class="stat-box">
+        <div class="stat-label">日均访问量</div>
+        <div id="daily-avg" class="stat-number">-</div>
+      </div>
+    </div>
+    
+    <div class="tab-container">
+      <div class="tabs">
+        <div class="tab active" data-tab="trends">访问趋势</div>
+        <div class="tab" data-tab="geo">地理分布</div>
+        <div class="tab" data-tab="devices">设备分析</div>
+        <div class="tab" data-tab="details">详细日志</div>
+      </div>
+      
+      <!-- 访问趋势 -->
+      <div id="trends-tab" class="tab-content active">
+        <div class="card">
+          <h3>每日访问量趋势</h3>
+          <div class="chart-container">
+            <canvas id="daily-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 地理分布 -->
+      <div id="geo-tab" class="tab-content">
+        <div class="card">
+          <h3>访问者地理分布</h3>
+          <div class="chart-container">
+            <canvas id="geo-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 设备分析 -->
+      <div id="devices-tab" class="tab-content">
+        <div class="chart-row">
+          <div class="card">
+            <h3>设备类型分布</h3>
+            <div class="chart-container">
+              <canvas id="device-chart"></canvas>
+            </div>
+          </div>
+          <div class="card">
+            <h3>浏览器分布</h3>
+            <div class="chart-container">
+              <canvas id="browser-chart"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="card">
+          <h3>操作系统分布</h3>
+          <div class="chart-container">
+            <canvas id="os-chart"></canvas>
+          </div>
+        </div>
+      </div>
+      
+      <!-- 详细日志 -->
+      <div id="details-tab" class="tab-content">
+        <div class="card">
+          <h3>最近100条访问记录</h3>
+          <div class="table-container">
+            <table id="logs-table">
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>IP地址</th>
+                  <th>国家/地区</th>
+                  <th>设备</th>
+                  <th>浏览器</th>
+                  <th>操作系统</th>
+                  <th>来源</th>
+                </tr>
+              </thead>
+              <tbody id="logs-body">
+                <tr>
+                  <td colspan="7" class="loading">加载中...</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // 颜色配置
+    const colors = [
+      '#4285F4', '#EA4335', '#FBBC05', '#34A853', 
+      '#FF6D01', '#46BDC6', '#7B61FF', '#1CA45C',
+      '#5F6368', '#E94235', '#2AB673', '#5C2D91'
+    ];
+    
+    // 格式化日期
+    function formatDate(dateStr) {
+      const date = new Date(dateStr);
+      return date.toLocaleDateString('zh-CN');
+    }
+    
+    // 格式化时间
+    function formatDateTime(dateTimeStr) {
+      const date = new Date(dateTimeStr);
+      return date.toLocaleDateString('zh-CN') + ' ' + date.toLocaleTimeString('zh-CN');
+    }
+    
+    // 生成随机颜色
+    function getRandomColors(count) {
+      const result = [];
+      for (let i = 0; i < count; i++) {
+        result.push(colors[i % colors.length]);
+      }
+      return result;
+    }
+    
+    // 加载所有重定向key
+    async function loadRedirectKeys() {
+      try {
+        const response = await fetch('/admin/api/redirects');
+        if (!response.ok) throw new Error('获取重定向记录失败');
+        
+        const redirects = await response.json();
+        const keySelect = document.getElementById('key-select');
+        
+        keySelect.innerHTML = '';
+        if (redirects.length === 0) {
+          keySelect.innerHTML = '<option value="">无重定向记录</option>';
+          return;
+        }
+        
+        redirects.forEach(redirect => {
+          const option = document.createElement('option');
+          option.value = redirect.key;
+          option.textContent = redirect.key;
+          keySelect.appendChild(option);
+        });
+        
+        // 加载第一个key的数据
+        if (redirects.length > 0) {
+          loadStatistics(redirects[0].key);
+        }
+      } catch (error) {
+        console.error('加载重定向记录失败:', error);
+        document.getElementById('key-select').innerHTML = 
+          '<option value="">加载失败</option>';
+      }
+    }
+    
+    // 加载统计数据
+    async function loadStatistics(key) {
+      loadSummary(key);
+      loadDailyStats(key);
+      loadGeoStats(key);
+      loadDeviceStats(key);
+      loadBrowserStats(key);
+      loadOsStats(key);
+      loadDetailedLogs(key);
+    }
+    
+    // 加载摘要数据
+    async function loadSummary(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/summary?key=\${key}\`);
+        if (!response.ok) throw new Error('获取统计摘要失败');
+        
+        const data = await response.json();
+        
+        // 更新摘要卡片
+        document.getElementById('total-visits').textContent = data.totalCount;
+        
+        // 计算今日访问量
+        const today = data.dailyCounts[data.dailyCounts.length - 1].count;
+        document.getElementById('today-visits').textContent = today;
+        
+        // 计算本周访问量
+        const weeklyVisits = data.dailyCounts.reduce((sum, day) => sum + day.count, 0);
+        document.getElementById('weekly-visits').textContent = weeklyVisits;
+        
+        // 计算日均访问量
+        const dailyAvg = Math.round(weeklyVisits / 7);
+        document.getElementById('daily-avg').textContent = dailyAvg;
+        
+      } catch (error) {
+        console.error('加载统计摘要失败:', error);
+        document.getElementById('total-visits').textContent = '-';
+        document.getElementById('today-visits').textContent = '-';
+        document.getElementById('weekly-visits').textContent = '-';
+        document.getElementById('daily-avg').textContent = '-';
+      }
+    }
+    
+    // 加载每日统计数据
+    async function loadDailyStats(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/daily?key=\${key}&days=30\`);
+        if (!response.ok) throw new Error('获取每日统计失败');
+        
+        const data = await response.json();
+        
+        // 渲染每日趋势图
+        const ctx = document.getElementById('daily-chart').getContext('2d');
+        
+        // 销毁已存在的图表
+        if (window.dailyChart) {
+          window.dailyChart.destroy();
+        }
+        
+        window.dailyChart = new Chart(ctx, {
+          type: 'line',
+          data: {
+            labels: data.dailyCounts.map(day => day.date),
+            datasets: [{
+              label: '每日访问量',
+              data: data.dailyCounts.map(day => day.count),
+              borderColor: '#0070f3',
+              backgroundColor: 'rgba(0, 112, 243, 0.1)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.2
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              },
+              x: {
+                ticks: {
+                  callback: function(value, index, values) {
+                    return formatDate(data.dailyCounts[index].date);
+                  }
+                }
+              }
+            },
+            plugins: {
+              tooltip: {
+                callbacks: {
+                  title: function(tooltipItems) {
+                    return formatDate(tooltipItems[0].label);
+                  }
+                }
+              }
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('加载每日统计失败:', error);
+        document.getElementById('daily-chart').innerHTML = 
+          '<div class="loading">加载数据失败</div>';
+      }
+    }
+    
+    // 加载地理统计数据
+    async function loadGeoStats(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/geo?key=\${key}\`);
+        if (!response.ok) throw new Error('获取地理位置统计失败');
+        
+        const data = await response.json();
+        
+        // 准备图表数据
+        const labels = Object.keys(data);
+        const values = Object.values(data);
+        
+        // 渲染地理分布图表
+        const ctx = document.getElementById('geo-chart').getContext('2d');
+        
+        // 销毁已存在的图表
+        if (window.geoChart) {
+          window.geoChart.destroy();
+        }
+        
+        window.geoChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: '访问量',
+              data: values,
+              backgroundColor: getRandomColors(labels.length),
+              borderWidth: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('加载地理位置统计失败:', error);
+      }
+    }
+    
+    // 加载设备类型统计数据
+    async function loadDeviceStats(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/devices?key=\${key}\`);
+        if (!response.ok) throw new Error('获取设备类型统计失败');
+        
+        const data = await response.json();
+        
+        // 准备图表数据
+        const labels = Object.keys(data);
+        const values = Object.values(data);
+        
+        // 渲染设备类型图表
+        const ctx = document.getElementById('device-chart').getContext('2d');
+        
+        // 销毁已存在的图表
+        if (window.deviceChart) {
+          window.deviceChart.destroy();
+        }
+        
+        window.deviceChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: '访问量',
+              data: values,
+              backgroundColor: getRandomColors(labels.length),
+              borderWidth: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'right'
+              }
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('加载设备类型统计失败:', error);
+      }
+    }
+    
+    // 加载浏览器统计数据
+    async function loadBrowserStats(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/browsers?key=\${key}\`);
+        if (!response.ok) throw new Error('获取浏览器统计失败');
+        
+        const data = await response.json();
+        
+        // 准备图表数据
+        const labels = Object.keys(data);
+        const values = Object.values(data);
+        
+        // 渲染浏览器图表
+        const ctx = document.getElementById('browser-chart').getContext('2d');
+        
+        // 销毁已存在的图表
+        if (window.browserChart) {
+          window.browserChart.destroy();
+        }
+        
+        window.browserChart = new Chart(ctx, {
+          type: 'doughnut',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: '访问量',
+              data: values,
+              backgroundColor: getRandomColors(labels.length),
+              borderWidth: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              legend: {
+                position: 'right'
+              }
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('加载浏览器统计失败:', error);
+      }
+    }
+    
+    // 加载操作系统统计数据
+    async function loadOsStats(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/os?key=\${key}\`);
+        if (!response.ok) throw new Error('获取操作系统统计失败');
+        
+        const data = await response.json();
+        
+        // 准备图表数据
+        const labels = Object.keys(data);
+        const values = Object.values(data);
+        
+        // 渲染操作系统图表
+        const ctx = document.getElementById('os-chart').getContext('2d');
+        
+        // 销毁已存在的图表
+        if (window.osChart) {
+          window.osChart.destroy();
+        }
+        
+        window.osChart = new Chart(ctx, {
+          type: 'bar',
+          data: {
+            labels: labels,
+            datasets: [{
+              label: '访问量',
+              data: values,
+              backgroundColor: getRandomColors(labels.length),
+              borderWidth: 1
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+              y: {
+                beginAtZero: true,
+                ticks: {
+                  precision: 0
+                }
+              }
+            }
+          }
+        });
+        
+      } catch (error) {
+        console.error('加载操作系统统计失败:', error);
+      }
+    }
+    
+    // 加载详细访问日志
+    async function loadDetailedLogs(key) {
+      try {
+        const response = await fetch(\`/admin/api/stats/logs?key=\${key}&limit=100\`);
+        if (!response.ok) throw new Error('获取访问日志失败');
+        
+        const data = await response.json();
+        const tbody = document.getElementById('logs-body');
+        
+        tbody.innerHTML = '';
+        
+        if (data.logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="loading">暂无访问记录</td></tr>';
+          return;
+        }
+        
+        data.logs.forEach(log => {
+          const row = document.createElement('tr');
+          row.innerHTML = \`
+            <td>\${formatDateTime(log.timestamp)}</td>
+            <td>\${log.ip}</td>
+            <td>\${log.country}</td>
+            <td>\${log.device}</td>
+            <td>\${log.browser}</td>
+            <td>\${log.os}</td>
+            <td>\${log.referer}</td>
+          \`;
+          tbody.appendChild(row);
+        });
+        
+      } catch (error) {
+        console.error('加载访问日志失败:', error);
+        document.getElementById('logs-body').innerHTML = 
+          '<tr><td colspan="7" class="loading">加载数据失败</td></tr>';
+      }
+    }
+    
+    // 标签页切换
+    function setupTabs() {
+      const tabs = document.querySelectorAll('.tab');
+      tabs.forEach(tab => {
+        tab.addEventListener('click', () => {
+          // 移除所有active类
+          tabs.forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(content => {
+            content.classList.remove('active');
+          });
+          
+          // 添加active类到当前标签
+          tab.classList.add('active');
+          const tabId = tab.dataset.tab;
+          document.getElementById(\`\${tabId}-tab\`).classList.add('active');
+        });
+      });
+    }
+    
+    // 初始化
+    document.addEventListener('DOMContentLoaded', () => {
+      setupTabs();
+      loadRedirectKeys();
+      
+      // 监听key选择变化
+      document.getElementById('key-select').addEventListener('change', (e) => {
+        const key = e.target.value;
+        if (key) {
+          loadStatistics(key);
+        }
+      });
+    });
+  </script>
+</body>
+</html>`;
+
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html; charset=utf-8' }
+  });
 } 
