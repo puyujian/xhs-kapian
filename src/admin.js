@@ -617,6 +617,7 @@ function getUrlsPage() {
     
     <div id="urls-table-container">
       <div id="loading-message">正在加载URL数据...</div>
+      <div id="error-message" style="display: none; color: red; margin-bottom: 15px;"></div>
       <table id="urls-table" style="display: none;">
         <thead>
           <tr>
@@ -634,12 +635,32 @@ function getUrlsPage() {
       <div id="no-urls-message" style="display: none; text-align: center; padding: 20px;">
         没有找到任何URL记录。点击"添加新URL"按钮创建第一个重定向链接。
       </div>
+      <button id="retry-load-btn" style="display: none; margin-top: 10px;">重试加载</button>
     </div>
   `;
   
   const scripts = `
+    // 全局变量定义
     let redirects = [];
     let stats = {};
+    let isLoadingData = false;
+    let apiTimeout = 15000; // 15秒API超时
+    
+    // 调试工具
+    function debugLog(message, data) {
+      console.log('[URL管理]', message, data || '');
+    }
+    
+    // 检查用户认证状态
+    function checkAuth() {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        debugLog('未检测到认证令牌，重定向到登录页面');
+        window.location.href = '/admin/login';
+        return false;
+      }
+      return true;
+    }
     
     // 工具函数：格式化日期
     function formatDate(dateString) {
@@ -650,7 +671,13 @@ function getUrlsPage() {
     
     // 显示/隐藏表单
     function toggleForm(show, isEdit = false) {
+      debugLog('切换表单显示', { show, isEdit });
       const container = document.getElementById('url-form-container');
+      if (!container) {
+        debugLog('错误: 找不到表单容器元素');
+        return;
+      }
+      
       container.style.display = show ? 'block' : 'none';
       
       if (show) {
@@ -661,60 +688,142 @@ function getUrlsPage() {
           document.getElementById('url-key').value = '';
           document.getElementById('url-target').value = '';
         }
+        // 清除任何错误消息
+        document.getElementById('key-error').textContent = '';
+        document.getElementById('url-error').textContent = '';
+        document.getElementById('form-message').textContent = '';
+      }
+    }
+    
+    // 显示错误消息
+    function showError(message) {
+      const errorElement = document.getElementById('error-message');
+      if (errorElement) {
+        errorElement.textContent = message;
+        errorElement.style.display = 'block';
+      }
+      
+      const loadingElement = document.getElementById('loading-message');
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+      
+      const retryButton = document.getElementById('retry-load-btn');
+      if (retryButton) {
+        retryButton.style.display = 'block';
       }
     }
     
     // 加载URL数据
     async function loadUrlData() {
+      debugLog('开始加载URL数据');
+      
+      if (isLoadingData) {
+        debugLog('已有加载请求正在进行中，跳过');
+        return;
+      }
+      
+      if (!checkAuth()) return;
+      
+      isLoadingData = true;
+      
       try {
         const token = localStorage.getItem('token');
-        if (!token) return;
         
-        // 获取所有重定向
-        const redirectsResponse = await fetch('/admin/api/redirects', {
+        // 隐藏错误消息，显示加载消息
+        const errorElement = document.getElementById('error-message');
+        if (errorElement) errorElement.style.display = 'none';
+        
+        const loadingElement = document.getElementById('loading-message');
+        if (loadingElement) loadingElement.style.display = 'block';
+        
+        const retryButton = document.getElementById('retry-load-btn');
+        if (retryButton) retryButton.style.display = 'none';
+        
+        // 获取所有重定向，添加超时处理
+        const redirectsPromise = fetch('/admin/api/redirects', {
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
         
-        if (redirectsResponse.ok) {
-          const redirectsData = await redirectsResponse.json();
-          redirects = redirectsData.redirects || [];
+        // 添加超时处理
+        const redirectsTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('获取重定向数据超时')), apiTimeout)
+        );
+        
+        const redirectsResponse = await Promise.race([redirectsPromise, redirectsTimeout]);
+        
+        if (!redirectsResponse.ok) {
+          // 检查是否是认证问题
+          if (redirectsResponse.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return;
+          }
+          
+          throw new Error('API响应错误: ' + redirectsResponse.status);
         }
+        
+        const redirectsData = await redirectsResponse.json();
+        redirects = redirectsData.redirects || [];
+        debugLog('成功获取重定向数据', { count: redirects.length });
         
         // 获取统计数据
-        const statsResponse = await fetch('/admin/api/stats', {
+        const statsPromise = fetch('/admin/api/stats', {
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
         
-        if (statsResponse.ok) {
-          const statsData = await statsResponse.json();
-          stats = {};
-          
-          // 将统计数据转换为以ID为键的对象，便于查询
-          if (statsData.stats && statsData.stats.length > 0) {
-            statsData.stats.forEach(item => {
-              stats[item.id] = item;
-            });
-          }
+        // 添加超时处理
+        const statsTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('获取统计数据超时')), apiTimeout)
+        );
+        
+        const statsResponse = await Promise.race([statsPromise, statsTimeout]);
+        
+        if (!statsResponse.ok) {
+          throw new Error('获取统计数据失败: ' + statsResponse.status);
         }
+        
+        const statsData = await statsResponse.json();
+        stats = {};
+        
+        // 将统计数据转换为以ID为键的对象，便于查询
+        if (statsData.stats && statsData.stats.length > 0) {
+          statsData.stats.forEach(item => {
+            stats[item.id] = item;
+          });
+        }
+        
+        debugLog('成功获取统计数据');
         
         // 刷新表格展示
         refreshUrlsTable();
       } catch (error) {
         console.error('加载URL数据错误:', error);
-        showMessage('加载数据失败，请刷新页面重试', true);
+        showError('加载数据失败: ' + (error.message || '未知错误') + '。请重试或刷新页面。');
+      } finally {
+        isLoadingData = false;
       }
     }
     
     // 刷新表格数据
     function refreshUrlsTable() {
+      debugLog('刷新URL表格');
+      
       const tableBody = document.getElementById('urls-list');
       const table = document.getElementById('urls-table');
       const noUrlsMessage = document.getElementById('no-urls-message');
       const loadingMessage = document.getElementById('loading-message');
+      
+      if (!tableBody || !table || !noUrlsMessage || !loadingMessage) {
+        debugLog('错误: 找不到表格必要元素');
+        return;
+      }
       
       // 隐藏加载消息
       loadingMessage.style.display = 'none';
@@ -777,23 +886,37 @@ function getUrlsPage() {
         tableBody.appendChild(row);
       });
       
+      // 添加按钮事件
+      attachButtonEvents();
+    }
+    
+    // 为表格中的按钮添加事件
+    function attachButtonEvents() {
+      debugLog('为表格按钮添加事件');
+      
       // 添加复制按钮事件
       document.querySelectorAll('.copy-btn').forEach(btn => {
         btn.addEventListener('click', function(e) {
           e.preventDefault();
+          e.stopPropagation();
           const url = this.getAttribute('data-url');
           navigator.clipboard.writeText(url).then(() => {
             this.textContent = '已复制';
             setTimeout(() => {
               this.textContent = '复制';
             }, 2000);
+          }).catch(err => {
+            console.error('复制失败:', err);
+            alert('复制链接失败，请手动复制');
           });
         });
       });
       
       // 添加编辑按钮事件
       document.querySelectorAll('.edit-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
           const id = parseInt(this.getAttribute('data-id'), 10);
           editRedirect(id);
         });
@@ -801,7 +924,9 @@ function getUrlsPage() {
       
       // 添加删除按钮事件
       document.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
+        btn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
           const id = parseInt(this.getAttribute('data-id'), 10);
           deleteRedirect(id);
         });
@@ -810,8 +935,13 @@ function getUrlsPage() {
     
     // 编辑重定向
     function editRedirect(id) {
+      debugLog('编辑重定向', { id });
+      
       const redirect = redirects.find(item => item.id === id);
-      if (!redirect) return;
+      if (!redirect) {
+        debugLog('错误: 找不到ID为' + id + '的重定向');
+        return;
+      }
       
       // 填充表单
       document.getElementById('url-id').value = redirect.id;
@@ -820,139 +950,277 @@ function getUrlsPage() {
       
       // 显示表单
       toggleForm(true, true);
+      
+      // 确保滚动到表单位置
+      document.getElementById('url-form-container').scrollIntoView({ behavior: 'smooth' });
     }
     
     // 删除重定向
     async function deleteRedirect(id) {
+      debugLog('删除重定向', { id });
+      
       if (!confirm('确定要删除这个URL重定向吗？所有相关的访问记录也将被删除。')) {
         return;
       }
       
       try {
         const token = localStorage.getItem('token');
-        if (!token) return;
+        if (!token) {
+          debugLog('未检测到认证令牌，重定向到登录页面');
+          window.location.href = '/admin/login';
+          return;
+        }
         
-        const response = await fetch('/admin/api/redirects/' + id, {
+        const deletePromise = fetch('/admin/api/redirects/' + id, {
           method: 'DELETE',
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
         
-        if (response.ok) {
-          // 重新加载数据
-          await loadUrlData();
-          showMessage('URL已成功删除', false);
-        } else {
+        // 添加超时处理
+        const deleteTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('删除操作超时')), apiTimeout)
+        );
+        
+        const response = await Promise.race([deletePromise, deleteTimeout]);
+        
+        if (!response.ok) {
+          // 检查是否是认证问题
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return;
+          }
+          
           const error = await response.json();
           showMessage(error.error || '删除失败，请重试', true);
+          return;
         }
+        
+        // 重新加载数据
+        await loadUrlData();
+        showMessage('URL已成功删除', false);
       } catch (error) {
         console.error('删除URL错误:', error);
-        showMessage('删除失败，请重试', true);
+        showMessage('删除失败: ' + (error.message || '未知错误'), true);
       }
     }
     
     // 显示消息
     function showMessage(message, isError) {
       const messageElement = document.getElementById('form-message');
+      if (!messageElement) {
+        debugLog('错误: 找不到消息元素');
+        return;
+      }
+      
       messageElement.textContent = message;
       messageElement.className = isError ? 'error' : 'success';
+      messageElement.style.color = isError ? 'red' : 'green';
       
       // 3秒后清除消息
       setTimeout(() => {
         messageElement.textContent = '';
         messageElement.className = '';
+        messageElement.style.color = '';
       }, 3000);
     }
     
-    // 初始化页面
-    document.addEventListener('DOMContentLoaded', function() {
-      // 加载URL数据
-      loadUrlData();
+    // 保存URL数据
+    async function saveUrlData(id, key, url) {
+      debugLog('保存URL数据', { id, key, url });
       
-      // 添加URL按钮事件
-      document.getElementById('add-url-btn').addEventListener('click', function() {
-        toggleForm(true, false);
-      });
-      
-      // 取消按钮事件
-      document.getElementById('cancel-url-btn').addEventListener('click', function() {
-        toggleForm(false);
-      });
-      
-      // 表单提交事件
-      document.getElementById('url-form').addEventListener('submit', async function(e) {
-        e.preventDefault();
-        
-        const id = document.getElementById('url-id').value;
-        const key = document.getElementById('url-key').value;
-        const url = document.getElementById('url-target').value;
-        
-        // 清除错误消息
-        document.getElementById('key-error').textContent = '';
-        document.getElementById('url-error').textContent = '';
-        
-        // 简单验证
-        let hasError = false;
-        if (!key.match(/^[a-zA-Z0-9-_]+$/)) {
-          document.getElementById('key-error').textContent = '键值只能包含字母、数字、中划线和下划线';
-          hasError = true;
+      try {
+        const token = localStorage.getItem('token');
+        if (!token) {
+          debugLog('未检测到认证令牌，重定向到登录页面');
+          window.location.href = '/admin/login';
+          return false;
         }
         
-        if (!url.match(/^https?:\/\//)) {
-          document.getElementById('url-error').textContent = 'URL必须以http://或https://开头';
-          hasError = true;
+        let savePromise;
+        
+        // 更新或创建
+        if (id) {
+          // 更新现有记录
+          savePromise = fetch('/admin/api/redirects/' + id, {
+            method: 'PUT',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ key, url })
+          });
+        } else {
+          // 创建新记录
+          savePromise = fetch('/admin/api/redirects', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ key, url })
+          });
         }
         
-        if (hasError) return;
+        // 添加超时处理
+        const saveTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('保存操作超时')), apiTimeout)
+        );
         
-        try {
-          const token = localStorage.getItem('token');
-          if (!token) return;
-          
-          let response;
-          
-          // 更新或创建
-          if (id) {
-            // 更新现有记录
-            response = await fetch('/admin/api/redirects/' + id, {
-              method: 'PUT',
-              headers: {
-                'Authorization': 'Bearer ' + token,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ key, url })
-            });
-          } else {
-            // 创建新记录
-            response = await fetch('/admin/api/redirects', {
-              method: 'POST',
-              headers: {
-                'Authorization': 'Bearer ' + token,
-                'Content-Type': 'application/json'
-              },
-              body: JSON.stringify({ key, url })
-            });
+        const response = await Promise.race([savePromise, saveTimeout]);
+        const data = await response.json();
+        
+        if (!response.ok) {
+          // 检查是否是认证问题
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return false;
           }
           
-          const data = await response.json();
+          // 显示API返回的错误
+          showMessage(data.error || '保存失败，请重试', true);
+          return false;
+        }
+        
+        // 成功保存
+        return true;
+      } catch (error) {
+        console.error('保存URL错误:', error);
+        showMessage('保存失败: ' + (error.message || '未知错误'), true);
+        return false;
+      }
+    }
+    
+    // 初始化事件处理函数
+    function initEventListeners() {
+      debugLog('初始化事件监听器');
+      
+      // 添加URL按钮事件
+      const addUrlBtn = document.getElementById('add-url-btn');
+      if (addUrlBtn) {
+        addUrlBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          debugLog('点击了添加URL按钮');
+          toggleForm(true, false);
+        });
+      } else {
+        debugLog('错误: 找不到添加URL按钮元素');
+      }
+      
+      // 取消按钮事件
+      const cancelUrlBtn = document.getElementById('cancel-url-btn');
+      if (cancelUrlBtn) {
+        cancelUrlBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          debugLog('点击了取消按钮');
+          toggleForm(false);
+        });
+      } else {
+        debugLog('错误: 找不到取消按钮元素');
+      }
+      
+      // 重试加载按钮事件
+      const retryLoadBtn = document.getElementById('retry-load-btn');
+      if (retryLoadBtn) {
+        retryLoadBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          debugLog('点击了重试加载按钮');
+          loadUrlData();
+        });
+      }
+      
+      // 表单提交事件
+      const urlForm = document.getElementById('url-form');
+      if (urlForm) {
+        urlForm.addEventListener('submit', async function(e) {
+          e.preventDefault();
+          e.stopPropagation();
+          debugLog('提交了URL表单');
           
-          if (response.ok) {
-            // 成功保存
+          const id = document.getElementById('url-id').value;
+          const key = document.getElementById('url-key').value;
+          const url = document.getElementById('url-target').value;
+          
+          // 清除错误消息
+          const keyError = document.getElementById('key-error');
+          const urlError = document.getElementById('url-error');
+          
+          if (keyError) keyError.textContent = '';
+          if (urlError) urlError.textContent = '';
+          
+          // 简单验证
+          let hasError = false;
+          if (!key.match(/^[a-zA-Z0-9-_]+$/)) {
+            if (keyError) keyError.textContent = '键值只能包含字母、数字、中划线和下划线';
+            hasError = true;
+          }
+          
+          if (!url.match(/^https?:\/\//)) {
+            if (urlError) urlError.textContent = 'URL必须以http://或https://开头';
+            hasError = true;
+          }
+          
+          if (hasError) return;
+          
+          // 保存数据
+          const success = await saveUrlData(id, key, url);
+          
+          if (success) {
             toggleForm(false);
             await loadUrlData();
             showMessage(id ? 'URL已成功更新' : 'URL已成功创建', false);
-          } else {
-            // 显示API返回的错误
-            showMessage(data.error || '保存失败，请重试', true);
           }
-        } catch (error) {
-          console.error('保存URL错误:', error);
-          showMessage('保存失败，请重试', true);
+        });
+      } else {
+        debugLog('错误: 找不到URL表单元素');
+      }
+    }
+    
+    // 检查页面加载状态并初始化
+    function checkReadyState() {
+      if (document.readyState === 'loading') {
+        // 文档仍在加载中，等待 DOMContentLoaded 事件
+        document.addEventListener('DOMContentLoaded', initPage);
+      } else {
+        // 文档已加载完成，直接初始化
+        initPage();
+      }
+    }
+    
+    // 页面初始化函数
+    function initPage() {
+      debugLog('初始化页面');
+      
+      // 检查认证
+      if (!checkAuth()) return;
+      
+      // 初始化事件监听
+      initEventListeners();
+      
+      // 加载URL数据
+      loadUrlData();
+      
+      // 设置全局错误处理
+      window.addEventListener('error', function(event) {
+        console.error('全局错误:', event.error);
+        if (!isLoadingData) {
+          showError('发生错误: ' + (event.error?.message || '未知错误'));
         }
       });
-    });
+    }
+    
+    // 启动初始化
+    checkReadyState();
   `;
   
   return getBasePage('URL管理', content, scripts);

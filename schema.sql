@@ -14,7 +14,7 @@ CREATE TABLE visits (
   ip TEXT,
   user_agent TEXT,
   referer TEXT,
-  country TEXT,  -- 国家/地区
+  country TEXT,
   timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (redirect_id) REFERENCES redirects(id)
 );
@@ -27,7 +27,5 @@ CREATE TABLE users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
--- 初始管理员账户，密码为"admin"（实际环境请使用更强的密码）
--- 注意: 这里使用的是bcrypt哈希值，实际部署时应替换
 INSERT INTO users (username, password_hash) 
 VALUES ('admin', '$2a$10$zXEv7BxnJ2oNMFYoV9OGLu5oNE9XJqeS8CdJxMbC5vvNBYPYjxrau'); 
