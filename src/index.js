@@ -10,6 +10,20 @@ const app = {
     const url = new URL(request.url);
     const path = url.pathname;
     
+    // 处理 Cloudflare 特定路径
+    if (path.startsWith('/cdn-cgi/')) {
+      // 处理 Cloudflare 的预加载和 RUM 请求
+      if (path.startsWith('/cdn-cgi/speculation') || path.startsWith('/cdn-cgi/rum')) {
+        return new Response('', {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Cache-Control': 'max-age=3600'
+          }
+        });
+      }
+    }
+    
     // 创建数据库实例
     const db = new Database(env.DB);
     
