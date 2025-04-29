@@ -553,8 +553,9 @@ function getAdminIndexPage() {
         
         if (redirectsResponse.ok) {
           const redirectsData = await redirectsResponse.json();
+          redirects = Array.isArray(redirectsData.redirects) ? redirectsData.redirects : [];
           document.getElementById('redirect-count').textContent = 
-            '系统中共有 ' + redirectsData.redirects.length + ' 个重定向链接';
+            '系统中共有 ' + redirects.length + ' 个重定向链接';
         }
         
         // 获取访问统计
@@ -785,13 +786,8 @@ function getUrlsPage() {
         }
         
         const redirectsData = await redirectsResponse.json();
-        debugLog('获取重定向数据响应', redirectsData);
-        
-        if (!redirectsData.redirects) {
-          throw new Error('API返回数据格式错误: 缺少redirects字段');
-        }
-        
-        redirects = redirectsData.redirects || [];
+        // 修改点：确保 redirects 总是数组
+        redirects = Array.isArray(redirectsData.redirects) ? redirectsData.redirects : [];
         debugLog('成功获取重定向数据', { count: redirects.length });
         
         // 获取统计数据
@@ -876,50 +872,52 @@ function getUrlsPage() {
         tableBody.innerHTML = '';
         
         // 填充数据
-        redirects.forEach(redirect => {
-          const row = document.createElement('tr');
-          
-          // 获取统计数据
-          const stat = stats[redirect.id] || {};
-          const visitCount = stat.visit_count || 0;
-          
-          // 短链接列
-          const shortUrlCell = document.createElement('td');
-          const shortUrl = window.location.origin + '/' + redirect.key;
-          shortUrlCell.innerHTML = 
-            '<a href="' + shortUrl + '" target="_blank" title="访问链接">' + redirect.key + '</a>' +
-            '<button class="copy-btn" data-url="' + shortUrl + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 0; font-size: 12px; margin-left: 5px;">复制</button>';
-          
-          // 目标URL列
-          const targetUrlCell = document.createElement('td');
-          targetUrlCell.textContent = redirect.url.length > 50 ? 
-            redirect.url.substring(0, 47) + '...' : redirect.url;
-          targetUrlCell.title = redirect.url;
-          
-          // 创建时间列
-          const createdAtCell = document.createElement('td');
-          createdAtCell.textContent = formatDate(redirect.created_at);
-          
-          // 访问次数列
-          const visitsCell = document.createElement('td');
-          visitsCell.textContent = visitCount;
-          
-          // 操作列
-          const actionsCell = document.createElement('td');
-          actionsCell.innerHTML = 
-            '<button class="edit-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 5px 10px;">编辑</button>' +
-            '<button class="delete-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #e74c3c; cursor: pointer; padding: 5px 10px;">删除</button>';
-          
-          // 添加所有单元格到行
-          row.appendChild(shortUrlCell);
-          row.appendChild(targetUrlCell);
-          row.appendChild(createdAtCell);
-          row.appendChild(visitsCell);
-          row.appendChild(actionsCell);
-          
-          // 添加行到表格
-          tableBody.appendChild(row);
-        });
+        if (Array.isArray(redirects)) {
+          redirects.forEach(redirect => {
+            const row = document.createElement('tr');
+            
+            // 获取统计数据
+            const stat = stats[redirect.id] || {};
+            const visitCount = stat.visit_count || 0;
+            
+            // 短链接列
+            const shortUrlCell = document.createElement('td');
+            const shortUrl = window.location.origin + '/' + redirect.key;
+            shortUrlCell.innerHTML = 
+              '<a href="' + shortUrl + '" target="_blank" title="访问链接">' + redirect.key + '</a>' +
+              '<button class="copy-btn" data-url="' + shortUrl + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 0; font-size: 12px; margin-left: 5px;">复制</button>';
+            
+            // 目标URL列
+            const targetUrlCell = document.createElement('td');
+            targetUrlCell.textContent = redirect.url.length > 50 ? 
+              redirect.url.substring(0, 47) + '...' : redirect.url;
+            targetUrlCell.title = redirect.url;
+            
+            // 创建时间列
+            const createdAtCell = document.createElement('td');
+            createdAtCell.textContent = formatDate(redirect.created_at);
+            
+            // 访问次数列
+            const visitsCell = document.createElement('td');
+            visitsCell.textContent = visitCount;
+            
+            // 操作列
+            const actionsCell = document.createElement('td');
+            actionsCell.innerHTML = 
+              '<button class="edit-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 5px 10px;">编辑</button>' +
+              '<button class="delete-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #e74c3c; cursor: pointer; padding: 5px 10px;">删除</button>';
+            
+            // 添加所有单元格到行
+            row.appendChild(shortUrlCell);
+            row.appendChild(targetUrlCell);
+            row.appendChild(createdAtCell);
+            row.appendChild(visitsCell);
+            row.appendChild(actionsCell);
+            
+            // 添加行到表格
+            tableBody.appendChild(row);
+          });
+        }
         
         // 添加按钮事件
         attachButtonEvents();
