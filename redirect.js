@@ -1090,16 +1090,38 @@ async function handleAdminRequest(request, env) {
  * @returns {boolean} 是否已认证
  */
 async function verifySession(request, env) {
-  // 简单的会话验证，检查Cookie中的token
+  // [MODIFICATION START] Simplify session verification to rely only on cookies
+  // 1. 检查标准Cookie
   const cookieHeader = request.headers.get('Cookie') || '';
-  console.log('Cookie header:', cookieHeader);
+  console.log('验证会话 - Cookie header:', cookieHeader);
   
   const cookies = parseCookies(cookieHeader);
-  const sessionToken = cookies['admin_session'];
+  const sessionToken = cookies['admin_session'] || cookies['admin_session_alt'] || cookies['admin_session_secure'];
   
-  console.log('Session token found:', sessionToken ? '是' : '否');
+  console.log('从Cookie中找到Session token:', sessionToken ? '是' : '否');
+
+  /* // Remove checks for other token sources
+  // 2. 检查Authorization请求头
+  const authHeader = request.headers.get('Authorization') || '';
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
   
-  if (!sessionToken) {
+  console.log('从Authorization头中找到令牌:', bearerToken ? '是' : '否');
+  
+  // 3. 检查自定义X-Auth-Token头
+  const xAuthToken = request.headers.get('X-Auth-Token');
+  
+  console.log('从X-Auth-Token头中找到令牌:', xAuthToken ? '是' : '否');
+  
+  // 合并所有可能的token
+  const token = sessionToken || bearerToken || xAuthToken;
+  */
+
+  // 仅使用来自Cookie的token
+  const token = sessionToken;
+  // [MODIFICATION END] Simplify session verification
+
+  if (!token) {
+    console.log('未找到任何有效的认证令牌');
     return false;
   }
   
@@ -1111,9 +1133,16 @@ async function verifySession(request, env) {
   
   // 使用环境变量中的密码生成预期token
   const expectedToken = await generateSessionToken(env.ADMIN_PASSWORD);
-  const tokenMatches = sessionToken === expectedToken;
+  const tokenMatches = token === expectedToken;
   
   console.log('Token验证:', tokenMatches ? '成功' : '失败');
+  
+  // 额外调试信息
+  if (!tokenMatches) {
+    console.log('令牌不匹配。收到的令牌:', token.substring(0, 10) + '...');
+    console.log('期望的令牌:', expectedToken.substring(0, 10) + '...');
+  }
+  
   return tokenMatches;
 }
 
@@ -1266,12 +1295,46 @@ function serveLoginPage(request, env) {
         <button id="init-db-button" class="debug-button">初始化数据库</button>
         <button id="check-session" class="debug-button">检查会话状态</button>
         <button id="check-db" class="debug-button">检查数据库状态</button>
+        <button id="try-default-login" class="debug-button">尝试默认密码登录</button>
+        <button id="check-token-login" class="debug-button">使用本地令牌登录</button>
       </div>
       <div id="debug-output" class="debug-output"></div>
     </div>
   </div>
 
   <script>
+    // 尝试使用localStorage中的令牌进行登录
+    /* // [MODIFICATION START] Comment out the auto-login logic
+    window.addEventListener('load', function() {
+      const savedToken = localStorage.getItem('admin_auth_token');
+      if (savedToken) {
+        console.log('检测到已保存的令牌，尝试自动登录...');
+        
+        // 使用令牌尝试获取仪表板
+        fetch('/admin/dashboard', {
+          headers: {
+            'X-Auth-Token': savedToken
+          },
+          credentials: 'same-origin'
+        })
+        .then(response => {
+          if (response.ok) {
+            console.log('使用保存的令牌登录成功');
+            // 成功则重定向到仪表板
+            window.location.href = '/admin/dashboard';
+          } else {
+            console.log('保存的令牌无效，需要重新登录');
+            // 如果失败，清除无效令牌
+            localStorage.removeItem('admin_auth_token');
+          }
+        })
+        .catch(error => {
+          console.error('自动登录请求失败:', error);
+        });
+      }
+    });
+    */ // [MODIFICATION END] Comment out the auto-login logic
+
     document.getElementById('login-form').addEventListener('submit', function(e) {
       e.preventDefault();
       
@@ -1294,19 +1357,63 @@ function serveLoginPage(request, env) {
       .then(function(response) {
         console.log('收到响应:', response.status);
         
+        // 检查X-Auth-Token头
+        const authToken = response.headers.get('X-Auth-Token');
+        if (authToken) {
+          console.log('检测到X-Auth-Token，将保存在localStorage');
+          localStorage.setItem('admin_auth_token', authToken);
+        }
+        
         if (response.ok) {
           // 登录成功
           return response.json().then(function(data) {
             errorElement.textContent = '登录成功，正在跳转...';
             console.log('登录成功');
             
+            // [MODIFICATION START] Simplify redirection
+            // 移除 localStorage 和 fetch 逻辑, 直接跳转
+            /*
+            // 如果响应中包含令牌，保存到localStorage作为备份
+            if (data.token) {
+              localStorage.setItem('admin_auth_token', data.token);
+              console.log('令牌已保存到localStorage');
+            }
+            
             // 使用延迟确保Cookie已被保存
             setTimeout(function() {
               const redirectUrl = data.redirect || '/admin/dashboard';
-              window.location.href = redirectUrl;
+              
+              // 在重定向请求中添加令牌作为请求头
+              const savedToken = localStorage.getItem('admin_auth_token');
+              if (savedToken) {
+                // 创建一个新的请求，添加令牌到头部
+                fetch(redirectUrl, {
+                  headers: {
+                    'X-Auth-Token': savedToken
+                  },
+                  credentials: 'same-origin'
+                })
+                .then(response => {
+                  // 不管响应如何，直接重定向
+                  window.location.href = redirectUrl;
+                })
+                .catch(error => {
+                  // 出错时也尝试普通重定向
+                  window.location.href = redirectUrl;
+                });
+              } else {
+                // 如果没有保存的令牌，直接重定向
+                window.location.href = redirectUrl;
+              }
             }, 1000);
+            */
+            // 直接跳转，依赖Cookie
+            window.location.href = data.redirect || '/admin/dashboard';
+            // [MODIFICATION END] Simplify redirection
           })
           .catch(function(error) {
+            // [MODIFICATION START] Simplify catch block for JSON parsing error
+            /*
             // JSON解析错误，仍然尝试重定向
             console.error('JSON解析错误:', error);
             errorElement.textContent = '登录成功，正在跳转...';
@@ -1360,13 +1467,120 @@ function serveLoginPage(request, env) {
       debugOutput.style.display = 'block';
       debugOutput.textContent = '正在检查会话状态...';
       
-      fetch('/admin/api/debug/session')
+      // 如果有本地存储的令牌，添加到请求头
+      const savedToken = localStorage.getItem('admin_auth_token');
+      const headers = {};
+      if (savedToken) {
+        headers['X-Auth-Token'] = savedToken;
+      }
+      
+      fetch('/admin/api/debug/session', { headers })
       .then(response => response.json())
       .then(data => {
         debugOutput.textContent = JSON.stringify(data, null, 2);
       })
       .catch(error => {
         debugOutput.textContent = '检查会话状态出错: ' + error.message;
+      });
+    });
+    
+    // 尝试默认密码登录
+    document.getElementById('try-default-login').addEventListener('click', function() {
+      const debugOutput = document.getElementById('debug-output');
+      debugOutput.style.display = 'block';
+      debugOutput.textContent = '正在尝试使用默认密码登录...';
+      
+      // 发送登录请求，使用默认密码
+      fetch('/admin/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({ password: 'admin123' }),
+        credentials: 'same-origin'
+      })
+      .then(function(response) {
+        if (response.ok) {
+          return response.json().then(data => {
+            debugOutput.textContent = '默认密码登录成功！\n' + JSON.stringify(data, null, 2);
+            
+            // 保存令牌
+            if (data.token) {
+              localStorage.setItem('admin_auth_token', data.token);
+            }
+            
+            // 提供跳转按钮
+            const redirectButton = document.createElement('button');
+            redirectButton.innerText = '点击跳转到仪表板';
+            redirectButton.className = 'debug-button';
+            redirectButton.style.marginTop = '10px';
+            redirectButton.style.backgroundColor = '#0070f3';
+            redirectButton.style.color = 'white';
+            redirectButton.addEventListener('click', function() {
+              window.location.href = data.redirect || '/admin/dashboard';
+            });
+            
+            debugOutput.appendChild(document.createElement('br'));
+            debugOutput.appendChild(redirectButton);
+          });
+        } else {
+          return response.json().then(errorData => {
+            debugOutput.textContent = '默认密码登录失败: ' + (errorData.error || '未知错误');
+          }).catch(() => {
+            debugOutput.textContent = '默认密码登录失败 (状态码: ' + response.status + ')';
+          });
+        }
+      })
+      .catch(error => {
+        debugOutput.textContent = '登录请求失败: ' + error.message;
+      });
+    });
+    
+    // 使用本地令牌登录
+    document.getElementById('check-token-login').addEventListener('click', function() {
+      const debugOutput = document.getElementById('debug-output');
+      debugOutput.style.display = 'block';
+      
+      const savedToken = localStorage.getItem('admin_auth_token');
+      
+      if (!savedToken) {
+        debugOutput.textContent = '未找到保存的令牌，请先登录一次';
+        return;
+      }
+      
+      debugOutput.textContent = '正在使用本地存储的令牌尝试访问仪表板...';
+      
+      fetch('/admin/dashboard', {
+        headers: {
+          'X-Auth-Token': savedToken
+        },
+        credentials: 'same-origin'
+      })
+      .then(response => {
+        if (response.ok) {
+          debugOutput.textContent = '使用保存的令牌登录成功！';
+          
+          // 提供跳转按钮
+          const redirectButton = document.createElement('button');
+          redirectButton.innerText = '点击跳转到仪表板';
+          redirectButton.className = 'debug-button';
+          redirectButton.style.marginTop = '10px';
+          redirectButton.style.backgroundColor = '#0070f3';
+          redirectButton.style.color = 'white';
+          redirectButton.addEventListener('click', function() {
+            window.location.href = '/admin/dashboard';
+          });
+          
+          debugOutput.appendChild(document.createElement('br'));
+          debugOutput.appendChild(redirectButton);
+        } else {
+          debugOutput.textContent = '保存的令牌无效，状态码: ' + response.status;
+          localStorage.removeItem('admin_auth_token');
+        }
+      })
+      .catch(error => {
+        debugOutput.textContent = '令牌验证请求失败: ' + error.message;
       });
     });
     
@@ -1436,15 +1650,29 @@ async function handleLogin(request, env) {
       // 如果是API调用（JSON请求），返回JSON响应
       if (acceptHeader.includes('application/json')) {
         console.log('使用JSON响应...');
+        
+        // 设置多种 Cookie 格式提高兼容性
+        const cookies = [
+          // 标准设置，但更宽松
+          `admin_session=${sessionToken}; Path=/; SameSite=Lax; Max-Age=3600`,
+          
+          // 备用设置，不使用 HttpOnly，允许 JavaScript 读取
+          `admin_session_alt=${sessionToken}; Path=/; Max-Age=3600`,
+          
+          // 如果站点通过 HTTPS 访问，提供 Secure + SameSite=None 选项
+          request.url.startsWith('https') ? 
+            `admin_session_secure=${sessionToken}; Path=/; SameSite=None; Secure; Max-Age=3600` : ''
+        ].filter(Boolean); // 移除空字符串
+        
         return new Response(JSON.stringify({ 
           success: true, 
           redirect: '/admin/dashboard',
-          message: '登录成功，请等待重定向'
+          message: '登录成功，请等待重定向',
         }), {
           status: 200,
           headers: {
             'Content-Type': 'application/json',
-            'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+            'Set-Cookie': cookies,
           }
         });
       } 
@@ -1455,7 +1683,7 @@ async function handleLogin(request, env) {
           status: 302,
           headers: {
             'Location': '/admin/dashboard',
-            'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+            'Set-Cookie': `admin_session=${sessionToken}; Path=/; SameSite=Lax; Max-Age=3600`,
           }
         });
       }
@@ -3292,24 +3520,60 @@ function serveStatisticsPage(request, env) {
  * @returns {Response} 调试信息
  */
 async function handleSessionDebug(request, env) {
-  // 检查Cookie
+  // 检查所有可能的认证方式
   const cookieHeader = request.headers.get('Cookie') || '';
+  const authHeader = request.headers.get('Authorization') || '';
+  const xAuthToken = request.headers.get('X-Auth-Token');
+  
   const cookies = parseCookies(cookieHeader);
-  const sessionToken = cookies['admin_session'];
+  const sessionTokens = {
+    standard: cookies['admin_session'],
+    alt: cookies['admin_session_alt'],
+    secure: cookies['admin_session_secure']
+  };
+  
+  const bearerToken = authHeader.startsWith('Bearer ') ? authHeader.substring(7) : null;
+  
+  // 合并所有可能的token
+  const token = sessionTokens.standard || sessionTokens.alt || sessionTokens.secure || bearerToken || xAuthToken;
   
   // 生成预期token (不包含敏感数据)
-  const hasSession = !!sessionToken;
+  const hasSession = !!token;
   const expectedToken = await generateSessionToken(env.ADMIN_PASSWORD);
-  const tokenMatches = sessionToken === expectedToken;
+  const tokenMatches = token === expectedToken;
+  
+  // 手动验证默认密码
+  const defaultPasswordToken = await generateSessionToken("admin123");
+  const matchesDefaultPassword = token === defaultPasswordToken;
   
   // 准备响应数据
   const data = {
     hasSession,
     sessionValid: tokenMatches,
+    cookieTokens: {
+      standardCookie: !!sessionTokens.standard,
+      altCookie: !!sessionTokens.alt,
+      secureCookie: !!sessionTokens.secure
+    },
+    otherTokens: {
+      bearerToken: !!bearerToken,
+      xAuthToken: !!xAuthToken
+    },
     adminPasswordSet: env.ADMIN_PASSWORD !== 'your_secure_password_here',
+    matchesDefaultPassword,
+    defaultPasswordWouldWork: await generateSessionToken("admin123") === expectedToken,
+    requestUrl: request.url,
     userAgent: request.headers.get('User-Agent'),
     cookieHeader: cookieHeader.length > 0,
+    // 显示允许的origin，帮助排查CORS问题
+    requestOrigin: request.headers.get('Origin'),
     time: new Date().toISOString(),
+    // 如果找到了令牌但验证失败，返回令牌前10位作为调试信息
+    tokenDebug: token && !tokenMatches ? {
+      receivedTokenPrefix: token.substring(0, 10) + '...',
+      expectedTokenPrefix: expectedToken.substring(0, 10) + '...',
+      lengthMatches: token.length === expectedToken.length
+    } : null
   };
   
   // 返回JSON响应
