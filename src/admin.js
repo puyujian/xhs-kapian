@@ -553,7 +553,7 @@ function getAdminIndexPage() {
         
         if (redirectsResponse.ok) {
           const redirectsData = await redirectsResponse.json();
-          redirects = Array.isArray(redirectsData.redirects) ? redirectsData.redirects : [];
+          redirects = redirectsData.redirects.results || [];
           document.getElementById('redirect-count').textContent = 
             '系统中共有 ' + redirects.length + ' 个重定向链接';
         }
@@ -786,188 +786,106 @@ function getUrlsPage() {
         }
         
         const redirectsData = await redirectsResponse.json();
-        // 修改点：确保 redirects 总是数组
-        redirects = Array.isArray(redirectsData.redirects) ? redirectsData.redirects : [];
-        debugLog('成功获取重定向数据', { count: redirects.length });
+        // 修改点：确保 redirects 总是数组，并从正确的位置获取数据
+        redirects = redirectsData.redirects.results || []; 
+        debugLog('成功获取重定向数据', redirects);
         
-        // 获取统计数据
-        debugLog('发送获取统计数据请求');
-        const statsPromise = fetch('/admin/api/stats', {
-          headers: {
-            'Authorization': 'Bearer ' + token
-          }
-        });
+        // 获取统计数据（如果需要的话，可以并行或串行获取）
+        // debugLog('发送获取统计数据请求');
+        // const statsPromise = fetch('/admin/api/stats', { ... });
+        // ... 处理 stats ...
         
-        // 添加超时处理
-        const statsTimeout = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('获取统计数据超时')), apiTimeout)
-        );
+        // 渲染表格
+        renderTable();
         
-        const statsResponse = await Promise.race([statsPromise, statsTimeout]);
-        
-        if (!statsResponse.ok) {
-          const errorText = await statsResponse.text();
-          debugLog('获取统计数据失败', { status: statsResponse.status, body: errorText });
-          throw new Error('获取统计数据失败: ' + statsResponse.status + ' - ' + errorText);
-        }
-        
-        const statsData = await statsResponse.json();
-        debugLog('获取统计数据响应', statsData);
-        
-        if (!statsData.stats) {
-          debugLog('API返回数据格式错误: 缺少stats字段', statsData);
-          // 不抛出错误，继续处理
-        }
-        
-        stats = {};
-        
-        // 将统计数据转换为以ID为键的对象，便于查询
-        if (statsData.stats && statsData.stats.length > 0) {
-          statsData.stats.forEach(item => {
-            stats[item.id] = item;
-          });
-        }
-        
-        debugLog('成功获取统计数据', stats);
-        
-        // 刷新表格展示
-        refreshUrlsTable();
       } catch (error) {
-        console.error('加载URL数据错误:', error);
-        showError('加载数据失败: ' + (error.message || '未知错误') + '。请重试或刷新页面。');
+        debugLog('加载URL数据时出错', error);
+        showError('加载URL数据失败: ' + error.message);
       } finally {
         isLoadingData = false;
+        const loadingElement = document.getElementById('loading-message');
+        if (loadingElement) loadingElement.style.display = 'none';
+        debugLog('URL数据加载完成');
       }
     }
     
-    // 刷新表格数据
-    function refreshUrlsTable() {
-      debugLog('刷新URL表格');
+    // 渲染表格
+    function renderTable() {
+      debugLog('开始渲染表格', { redirectsCount: redirects.length });
+      const tableBody = document.getElementById('urls-list');
+      const table = document.getElementById('urls-table');
+      const noUrlsMessage = document.getElementById('no-urls-message');
+      const errorMessage = document.getElementById('error-message');
       
-      try {
-        const tableBody = document.getElementById('urls-list');
-        const table = document.getElementById('urls-table');
-        const noUrlsMessage = document.getElementById('no-urls-message');
-        const loadingMessage = document.getElementById('loading-message');
-        
-        if (!tableBody || !table || !noUrlsMessage || !loadingMessage) {
-          debugLog('错误: 找不到表格必要元素');
-          showError('无法初始化表格界面，请刷新重试。');
-          return;
-        }
-        
-        // 隐藏加载消息
-        loadingMessage.style.display = 'none';
-        
-        if (redirects.length === 0) {
-          table.style.display = 'none';
-          noUrlsMessage.style.display = 'block';
-          return;
-        }
-        
-        table.style.display = 'table';
-        noUrlsMessage.style.display = 'none';
-        
-        // 清空表格
-        tableBody.innerHTML = '';
-        
-        // 填充数据
-        if (Array.isArray(redirects)) {
-          redirects.forEach(redirect => {
-            const row = document.createElement('tr');
-            
-            // 获取统计数据
-            const stat = stats[redirect.id] || {};
-            const visitCount = stat.visit_count || 0;
-            
-            // 短链接列
-            const shortUrlCell = document.createElement('td');
-            const shortUrl = window.location.origin + '/' + redirect.key;
-            shortUrlCell.innerHTML = 
-              '<a href="' + shortUrl + '" target="_blank" title="访问链接">' + redirect.key + '</a>' +
-              '<button class="copy-btn" data-url="' + shortUrl + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 0; font-size: 12px; margin-left: 5px;">复制</button>';
-            
-            // 目标URL列
-            const targetUrlCell = document.createElement('td');
-            targetUrlCell.textContent = redirect.url.length > 50 ? 
-              redirect.url.substring(0, 47) + '...' : redirect.url;
-            targetUrlCell.title = redirect.url;
-            
-            // 创建时间列
-            const createdAtCell = document.createElement('td');
-            createdAtCell.textContent = formatDate(redirect.created_at);
-            
-            // 访问次数列
-            const visitsCell = document.createElement('td');
-            visitsCell.textContent = visitCount;
-            
-            // 操作列
-            const actionsCell = document.createElement('td');
-            actionsCell.innerHTML = 
-              '<button class="edit-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #3498db; cursor: pointer; padding: 5px 10px;">编辑</button>' +
-              '<button class="delete-btn" data-id="' + redirect.id + '" style="background: none; border: none; color: #e74c3c; cursor: pointer; padding: 5px 10px;">删除</button>';
-            
-            // 添加所有单元格到行
-            row.appendChild(shortUrlCell);
-            row.appendChild(targetUrlCell);
-            row.appendChild(createdAtCell);
-            row.appendChild(visitsCell);
-            row.appendChild(actionsCell);
-            
-            // 添加行到表格
-            tableBody.appendChild(row);
-          });
-        }
-        
-        // 添加按钮事件
-        attachButtonEvents();
-      } catch (error) {
-        console.error('渲染表格时出错:', error);
-        showError('渲染表格时出错: ' + error.message + '。请尝试刷新页面。');
+      if (!tableBody || !table || !noUrlsMessage || !errorMessage) {
+         debugLog('错误: 渲染表格所需的元素未找到');
+         showError('无法渲染表格，页面结构可能已损坏。');
+         return;
       }
-    }
-    
-    // 为表格中的按钮添加事件
-    function attachButtonEvents() {
-      debugLog('为表格按钮添加事件');
       
-      // 添加复制按钮事件
-      document.querySelectorAll('.copy-btn').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          const url = this.getAttribute('data-url');
-          navigator.clipboard.writeText(url).then(() => {
-            this.textContent = '已复制';
-            setTimeout(() => {
-              this.textContent = '复制';
-            }, 2000);
-          }).catch(err => {
-            console.error('复制失败:', err);
-            alert('复制链接失败，请手动复制');
-          });
-        });
+      // 清空现有表格内容
+      tableBody.innerHTML = ''; 
+      errorMessage.style.display = 'none'; // 隐藏之前的错误
+      
+      if (redirects.length === 0) {
+        debugLog('没有重定向数据，显示空消息');
+        table.style.display = 'none';
+        noUrlsMessage.style.display = 'block';
+        return;
+      }
+      
+      // 显示表格，隐藏空消息
+      table.style.display = 'table'; // 使用'table'确保正确显示
+      noUrlsMessage.style.display = 'none';
+      
+      redirects.forEach(item => {
+        const row = tableBody.insertRow();
+        
+        // 添加调试信息
+        debugLog('渲染行', item); 
+        
+        // 短链接键
+        const keyCell = row.insertCell();
+        keyCell.textContent = item.key;
+        
+        // 目标URL
+        const urlCell = row.insertCell();
+        // 为了防止非常长的URL破坏布局，可以考虑截断或添加title属性
+        urlCell.textContent = item.url.length > 60 ? item.url.substring(0, 57) + '...' : item.url;
+        urlCell.title = item.url; // 鼠标悬停时显示完整URL
+        
+        // 创建时间
+        const createdCell = row.insertCell();
+        // 修改点：直接使用API返回的格式化时间字符串
+        createdCell.textContent = item.created_at; 
+        // 如果需要客户端格式化：formatDate(item.created_at); 但API已提供格式化好的
+
+        // 访问次数 - 注意：当前API不直接返回此数据，留空或显示0
+        const visitsCell = row.insertCell();
+        visitsCell.textContent = stats[item.id]?.visit_count || 0; // 尝试从 stats 获取，默认为0
+        
+        // 操作按钮
+        const actionsCell = row.insertCell();
+        actionsCell.style.whiteSpace = 'nowrap'; // 防止按钮换行
+        
+        const editButton = document.createElement('button');
+        editButton.textContent = '编辑';
+        editButton.classList.add('edit-btn'); // 添加类以便样式化
+        editButton.style.marginRight = '5px'; // 添加间距
+        editButton.dataset.id = item.id;
+        editButton.addEventListener('click', handleEditClick);
+        actionsCell.appendChild(editButton);
+        
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = '删除';
+        deleteButton.classList.add('delete-btn'); // 添加类以便样式化
+        deleteButton.dataset.id = item.id;
+        deleteButton.dataset.key = item.key;
+        deleteButton.addEventListener('click', handleDeleteClick);
+        actionsCell.appendChild(deleteButton);
       });
       
-      // 添加编辑按钮事件
-      document.querySelectorAll('.edit-btn').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          const id = parseInt(this.getAttribute('data-id'), 10);
-          editRedirect(id);
-        });
-      });
-      
-      // 添加删除按钮事件
-      document.querySelectorAll('.delete-btn').forEach(btn => {
-        btn.addEventListener('click', function(e) {
-          e.preventDefault();
-          e.stopPropagation();
-          const id = parseInt(this.getAttribute('data-id'), 10);
-          deleteRedirect(id);
-        });
-      });
+      debugLog('表格渲染完成');
     }
     
     // 编辑重定向
