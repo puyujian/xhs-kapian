@@ -29,7 +29,27 @@ const app = {
     
     // 创建认证实例
     const auth = new Auth(db, env.JWT_SECRET);
-    
+
+    // 阻止通过特殊重定向域名 (e.g., *.xiaohongshu.com.pei.ee) 访问管理后台或API
+    // 使用与重定向逻辑相似的域名判断
+    const isPotentialSpecialDomain = url.hostname.endsWith('.pei.ee'); // Basic check, adjust if needed
+    const isAdminOrApiPath = path.startsWith('/admin') || path.startsWith('/api');
+
+    if (isPotentialSpecialDomain && isAdminOrApiPath) {
+        // More specific check based on lines 81-83:
+        const isSpecialRedirectDomain = (url.hostname.includes('xiaohongshu') || url.hostname.includes('xhs'));
+        if (isSpecialRedirectDomain) {
+          console.warn(`阻止通过特殊域名 ${url.hostname} 访问管理路径 ${path}`);
+          return new Response(
+            JSON.stringify({ error: 'Access Denied: Admin/API access via special redirect domains is not allowed.' }),
+            {
+              status: 403, // Forbidden
+              headers: { 'Content-Type': 'application/json' },
+            }
+          );
+        }
+    }
+
     // 处理静态资源
     if ((path === '/' || path === '') && !url.searchParams.has('key')) {
       // 首页
