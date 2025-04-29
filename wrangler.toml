@@ -1,0 +1,19 @@
+name = "cloudflare-redirect-system" # 您可以修改为您想要的 Worker 名称
+main = "worker.js"
+compatibility_date = "2023-12-01" # 使用一个较新的兼容性日期
+
+# KV Namespace 绑定
+[[kv_namespaces]]
+binding = "xhs"
+id = "09fed45690e844f68d98201d34cfa317" # 请替换为您创建的 REDIRECT_KV 的 ID
+
+# D1 Database 绑定
+[[d1_databases]]
+binding = "REDIRECT_DB"
+database_name = "xhs"
+database_id = "2e8061aa-7da5-4d6d-b2ac-a7ffe2ee81e2" # 请替换为您创建的 REDIRECT_DB 的 ID
+
+# 环境变量 (建议部署时使用 wrangler secret put)
+[vars]
+ADMIN_USERNAME = "admin" # 占位符，请替换
+ADMIN_PASSWORD = "password" # 占位符，请替换 
