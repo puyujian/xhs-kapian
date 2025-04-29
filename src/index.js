@@ -35,24 +35,13 @@ const app = {
     const isPotentialSpecialDomain = url.hostname.endsWith('.pei.ee'); // Basic check, adjust if needed
     const isAdminOrApiPath = path.startsWith('/admin') || path.startsWith('/api');
 
-    // 修改：仅阻止API访问，允许管理页面访问
+    // 修改：完全允许通过特殊域名访问管理页面和API
     if (isPotentialSpecialDomain && isAdminOrApiPath) {
         // More specific check based on lines 81-83:
         const isSpecialRedirectDomain = (url.hostname.includes('xiaohongshu') || url.hostname.includes('xhs'));
         if (isSpecialRedirectDomain) {
-            // 修改：仅当路径包含 '/api/' 时阻止访问
-            if (path.includes('/api/')) {
-                console.warn(`阻止通过特殊域名 ${url.hostname} 访问API路径 ${path}`);
-                return new Response(
-                    JSON.stringify({ error: 'Access Denied: API access via special redirect domains is not allowed.' }),
-                    {
-                        status: 403, // Forbidden
-                        headers: { 'Content-Type': 'application/json' },
-                    }
-                );
-            }
-            // 对于管理页面，允许访问
-            console.log(`允许通过特殊域名 ${url.hostname} 访问管理页面 ${path}`);
+            // 允许通过特殊域名访问管理页面和API
+            console.log(`允许通过特殊域名 ${url.hostname} 访问路径 ${path}`);
         }
     }
 
