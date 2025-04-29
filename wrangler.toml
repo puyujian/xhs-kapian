@@ -4,7 +4,7 @@ compatibility_date = "2023-09-01"
 
 # KV命名空间绑定
 kv_namespaces = [
-  { binding = "URL_REDIRECTS", id = "YOUR_KV_NAMESPACE_ID" }
+  { binding = "URL_REDIRECTS", id = "09fed45690e844f68d98201d34cfa317" }
 ]
 
 # 环境变量配置
