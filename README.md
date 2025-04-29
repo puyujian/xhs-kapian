@@ -75,4 +75,30 @@ CREATE TABLE visits (
 );
 
 CREATE INDEX visits_redirect_id ON visits (redirect_id);
-``` 
+```
+
+## 特殊URL格式支持
+
+除了标准的短链接格式（如 `https://your-domain.com/shortkey`），本系统还支持以下特殊格式：
+
+### 查询参数形式
+
+通过查询参数传递key：
+```
+https://your-domain.com/?key=shortkey
+```
+
+### 小红书类型URL格式
+
+支持形如以下格式的URL：
+```
+https://www.xiaohongshu.com.pei.ee/?key=shortkey&from=xhsapp
+https://xhs.com.pei.ee/?key=shortkey
+```
+
+或更复杂的子域名结构：
+```
+https://any-subdomain.xiaohongshu.com.pei.ee/?key=shortkey
+```
+
+这种格式专为需要伪装成小红书域名结构的应用场景设计，系统会优先识别域名中的`xiaohongshu`或`xhs`标识，并从查询参数中提取`key`值进行重定向。 

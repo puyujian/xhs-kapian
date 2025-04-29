@@ -69,29 +69,128 @@ const app = {
     }
     
     // 处理重定向
-    // 首先从路径中获取key（移除开头的"/"）
-    let key = path.substring(1);
+    // 添加详细的调试日志
+    console.log('处理重定向请求:', {
+      url: request.url,
+      hostname: url.hostname,
+      path: path,
+      query: Object.fromEntries(url.searchParams)
+    });
     
-    // 如果路径中没有key，尝试从查询参数中获取
-    if (!key || key === '') {
-      // 尝试从查询参数中获取key
+    // 小红书特殊URL处理逻辑 - 针对 xiaohongshu.com.pei.ee 这样的格式
+    // 优先处理这种格式，提取查询参数中的key
+    if (url.hostname.endsWith('pei.ee') && 
+       (url.hostname.includes('xiaohongshu') || 
+        url.hostname.includes('xhs'))) {
+      console.log('检测到小红书特定格式URL: *.xiaohongshu.*.pei.ee 或 *.xhs.*.pei.ee');
+      
+      // 直接从查询参数获取key
       const queryKey = url.searchParams.get('key');
       if (queryKey) {
-        key = queryKey;
+        const key = queryKey;
+        console.log('从小红书特定URL格式提取key:', key);
+        
+        // 使用key进行重定向
+        const redirect = await db.getRedirectByKey(key);
+        
+        if (redirect) {
+          // 记录访问
+          const clientInfo = getClientInfo(request);
+          await db.addVisit(redirect.id, clientInfo);
+          
+          console.log('找到重定向目标:', redirect.url);
+          // 重定向到目标URL
+          return Response.redirect(redirect.url, 302);
+        } else {
+          console.log('未找到与key匹配的重定向:', key);
+        }
+      } else {
+        console.log('小红书特定URL格式中未找到key参数');
       }
     }
-    
-    // 使用key进行重定向
-    if (key) {
-      const redirect = await db.getRedirectByKey(key);
+    // 处理其他小红书相关URL或一般的pei.ee域名
+    else if (url.hostname.includes('xiaohongshu') || url.hostname.includes('pei.ee')) {
+      console.log('检测到一般小红书相关URL格式');
       
-      if (redirect) {
-        // 记录访问
-        const clientInfo = getClientInfo(request);
-        await db.addVisit(redirect.id, clientInfo);
+      // 始终优先从查询参数获取key
+      const queryKey = url.searchParams.get('key');
+      if (queryKey) {
+        let key = queryKey;
+        console.log('从小红书URL查询参数提取key:', key);
         
-        // 重定向到目标URL
-        return Response.redirect(redirect.url, 302);
+        // 使用key进行重定向
+        const redirect = await db.getRedirectByKey(key);
+        
+        if (redirect) {
+          // 记录访问
+          const clientInfo = getClientInfo(request);
+          await db.addVisit(redirect.id, clientInfo);
+          
+          console.log('找到重定向目标:', redirect.url);
+          // 重定向到目标URL
+          return Response.redirect(redirect.url, 302);
+        } else {
+          console.log('未找到与key匹配的重定向:', key);
+        }
+      } else {
+        console.log('小红书URL中未找到key参数');
+      }
+    } else {
+      // 按照原来的流程处理普通URL格式
+      // 首先从路径中获取key（移除开头的"/"）
+      let key = path.substring(1);
+      console.log('从路径提取key:', key);
+      
+      // 如果路径中没有key，尝试从查询参数中获取
+      if (!key || key === '') {
+        // 尝试从查询参数中获取key
+        const queryKey = url.searchParams.get('key');
+        if (queryKey) {
+          key = queryKey;
+          console.log('从查询参数提取key:', key);
+        }
+      }
+      
+      // 处理形如 xiaohongshu.com.pei.ee 的域名格式
+      // 检查主域名是否包含可能的重定向key
+      if ((!key || key === '') && url.hostname) {
+        console.log('尝试从域名格式中提取key, 主机名:', url.hostname);
+        // 尝试解析类似 xiaohongshu.com.pei.ee 格式的域名
+        const hostParts = url.hostname.split('.');
+        console.log('域名部分:', hostParts);
+        // 如果域名格式正确，查找可能的键
+        if (hostParts.length >= 2) {
+          // 检查域名中是否包含我们的目标域名结构
+          const domainCheck = hostParts.join('.');
+          console.log('检查域名结构:', domainCheck);
+          if (domainCheck.includes('.pei.ee')) {
+            // 从查询参数获取key
+            const queryKey = url.searchParams.get('key');
+            if (queryKey) {
+              key = queryKey;
+              console.log('从特殊域名结构的查询参数中提取key:', key);
+            }
+          }
+        }
+      }
+      
+      console.log('最终使用的key:', key);
+      
+      // 使用key进行重定向
+      if (key) {
+        const redirect = await db.getRedirectByKey(key);
+        
+        if (redirect) {
+          // 记录访问
+          const clientInfo = getClientInfo(request);
+          await db.addVisit(redirect.id, clientInfo);
+          
+          console.log('找到重定向目标:', redirect.url);
+          // 重定向到目标URL
+          return Response.redirect(redirect.url, 302);
+        } else {
+          console.log('未找到与key匹配的重定向:', key);
+        }
       }
     }
     
