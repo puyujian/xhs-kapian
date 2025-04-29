@@ -1,5 +1,3 @@
-const path = require('path');
-
 // 管理面板请求处理
 async function handleAdmin(request, env, ctx, db, auth) {
   const url = new URL(request.url);
