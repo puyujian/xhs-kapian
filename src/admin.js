@@ -888,6 +888,30 @@ function getUrlsPage() {
       debugLog('表格渲染完成');
     }
     
+    // 处理编辑按钮点击事件
+    function handleEditClick(event) {
+      const button = event.target;
+      const id = button.dataset.id;
+      debugLog('编辑按钮点击', { id }); // 记录原始ID（字符串）
+      if (id) {
+        try {
+          const numericId = parseInt(id, 10); // 转换为数字
+          if (!isNaN(numericId)) {
+            editRedirect(numericId); // 调用编辑函数
+          } else {
+            debugLog('错误: 无效的数字ID', { id });
+            showMessage('无法编辑：无效的 ID', true);
+          }
+        } catch (error) {
+           debugLog('处理编辑点击时出错', { error });
+           showMessage('编辑操作失败', true);
+        }
+      } else {
+        debugLog('错误: 未在按钮上找到 ID');
+        showMessage('无法编辑：缺少 ID', true);
+      }
+    }
+
     // 编辑重定向
     function editRedirect(id) {
       debugLog('编辑重定向', { id });
