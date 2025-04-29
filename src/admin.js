@@ -881,7 +881,25 @@ function getUrlsPage() {
         deleteButton.classList.add('delete-btn'); // 添加类以便样式化
         deleteButton.dataset.id = item.id;
         deleteButton.dataset.key = item.key;
-        deleteButton.addEventListener('click', handleDeleteClick);
+        deleteButton.addEventListener('click', (event) => {
+          const button = event.target;
+          const id = button.dataset.id;
+          if (id) {
+            // 确认 id 是有效的数字才调用 deleteRedirect
+            const numericId = parseInt(id, 10);
+            if (!isNaN(numericId)) {
+               // 调用异步删除函数，但注意 addEventListener 的回调通常不是 async
+               // 因此我们不需要 await，让 deleteRedirect 在后台执行
+               deleteRedirect(numericId); 
+            } else {
+               console.error('无效的删除 ID:', id);
+               showMessage('无法删除：无效的 ID', true); // 假设 showMessage 函数可用
+            }
+          } else {
+             console.error('未在删除按钮上找到 ID');
+             showMessage('无法删除：缺少 ID', true); // 假设 showMessage 函数可用
+          }
+        });
         actionsCell.appendChild(deleteButton);
       });
       
