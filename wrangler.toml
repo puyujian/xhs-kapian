@@ -6,14 +6,14 @@ compatibility_date = "2023-09-01"
 [[d1_databases]]
 binding = "DB"
 database_name = "url_redirect_db"
-database_id = "your_database_id_here"
+database_id = "c1f993fd-defc-4a55-8189-47066ca9a773"
 
 # 环境变量配置
 [vars]
 # 管理员密码 - 请更改为安全的密码
 # 重要: 如果您未更改此默认密码，您将无法登录系统!
 # 必须将此密码更改为您自己设置的密码才能正常登录
-ADMIN_PASSWORD = "change_this_to_secure_password"
+ADMIN_PASSWORD = "your_secure_password_here"
 
 [build]
 command = ""
