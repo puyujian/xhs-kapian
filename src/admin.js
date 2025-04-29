@@ -65,26 +65,26 @@ async function handleAdminApi(request, env, db, auth) {
   // 获取所有重定向
   if (path === '/admin/api/redirects' && request.method === 'GET') {
     const redirects = await db.getAllRedirects();
-    return jsonResponse({ redirects: redirects.results });
+    return jsonResponse({ redirects: redirects });
   }
   
   // 获取重定向统计
   if (path === '/admin/api/stats' && request.method === 'GET') {
     const stats = await db.getRedirectStats();
-    return jsonResponse({ stats: stats.results });
+    return jsonResponse({ stats: stats });
   }
   
   // 获取特定重定向的访问数据
   if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
     const id = parseInt(path.split('/')[3], 10);
     const visits = await db.getRedirectVisits(id);
-    return jsonResponse({ visits: visits.results });
+    return jsonResponse({ visits: visits });
   }
   
   // 获取按国家统计的访问数据
   if (path === '/admin/api/stats/countries' && request.method === 'GET') {
     const countries = await db.getVisitsByCountry();
-    return jsonResponse({ countries: countries.results });
+    return jsonResponse({ countries: countries });
   }
   
   // 创建新的重定向
@@ -105,7 +105,8 @@ async function handleAdminApi(request, env, db, auth) {
       const result = await db.addRedirect(key, url);
       return jsonResponse({ success: true, id: result.id });
     } catch (e) {
-      return jsonResponse({ error: '无效的请求' }, 400);
+      console.error('创建重定向错误:', e);
+      return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
   
@@ -128,7 +129,8 @@ async function handleAdminApi(request, env, db, auth) {
       await db.updateRedirect(id, key, url);
       return jsonResponse({ success: true });
     } catch (e) {
-      return jsonResponse({ error: '无效的请求' }, 400);
+      console.error('更新重定向错误:', e);
+      return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
   
@@ -139,7 +141,8 @@ async function handleAdminApi(request, env, db, auth) {
       await db.deleteRedirect(id);
       return jsonResponse({ success: true });
     } catch (e) {
-      return jsonResponse({ error: '无效的请求' }, 400);
+      console.error('删除重定向错误:', e);
+      return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
   
@@ -701,6 +704,11 @@ function getUrlsPage() {
       if (errorElement) {
         errorElement.textContent = message;
         errorElement.style.display = 'block';
+        // 添加样式使消息更突出
+        errorElement.style.padding = '10px';
+        errorElement.style.backgroundColor = '#ffecec';
+        errorElement.style.border = '1px solid #f5c6cb';
+        errorElement.style.borderRadius = '4px';
       }
       
       const loadingElement = document.getElementById('loading-message');
@@ -711,7 +719,13 @@ function getUrlsPage() {
       const retryButton = document.getElementById('retry-load-btn');
       if (retryButton) {
         retryButton.style.display = 'block';
+        // 使重试按钮更突出
+        retryButton.style.marginTop = '15px';
+        retryButton.style.padding = '8px 15px';
       }
+      
+      // 控制台输出错误
+      console.error('URL管理错误:', message);
     }
     
     // 加载URL数据
@@ -741,6 +755,7 @@ function getUrlsPage() {
         if (retryButton) retryButton.style.display = 'none';
         
         // 获取所有重定向，添加超时处理
+        debugLog('发送获取重定向请求');
         const redirectsPromise = fetch('/admin/api/redirects', {
           headers: {
             'Authorization': 'Bearer ' + token
@@ -764,14 +779,23 @@ function getUrlsPage() {
             return;
           }
           
-          throw new Error('API响应错误: ' + redirectsResponse.status);
+          const errorText = await redirectsResponse.text();
+          debugLog('API响应错误', { status: redirectsResponse.status, body: errorText });
+          throw new Error('API响应错误: ' + redirectsResponse.status + ' - ' + errorText);
         }
         
         const redirectsData = await redirectsResponse.json();
+        debugLog('获取重定向数据响应', redirectsData);
+        
+        if (!redirectsData.redirects) {
+          throw new Error('API返回数据格式错误: 缺少redirects字段');
+        }
+        
         redirects = redirectsData.redirects || [];
         debugLog('成功获取重定向数据', { count: redirects.length });
         
         // 获取统计数据
+        debugLog('发送获取统计数据请求');
         const statsPromise = fetch('/admin/api/stats', {
           headers: {
             'Authorization': 'Bearer ' + token
@@ -786,10 +810,19 @@ function getUrlsPage() {
         const statsResponse = await Promise.race([statsPromise, statsTimeout]);
         
         if (!statsResponse.ok) {
-          throw new Error('获取统计数据失败: ' + statsResponse.status);
+          const errorText = await statsResponse.text();
+          debugLog('获取统计数据失败', { status: statsResponse.status, body: errorText });
+          throw new Error('获取统计数据失败: ' + statsResponse.status + ' - ' + errorText);
         }
         
         const statsData = await statsResponse.json();
+        debugLog('获取统计数据响应', statsData);
+        
+        if (!statsData.stats) {
+          debugLog('API返回数据格式错误: 缺少stats字段', statsData);
+          // 不抛出错误，继续处理
+        }
+        
         stats = {};
         
         // 将统计数据转换为以ID为键的对象，便于查询
@@ -799,7 +832,7 @@ function getUrlsPage() {
           });
         }
         
-        debugLog('成功获取统计数据');
+        debugLog('成功获取统计数据', stats);
         
         // 刷新表格展示
         refreshUrlsTable();
@@ -1046,6 +1079,7 @@ function getUrlsPage() {
         // 更新或创建
         if (id) {
           // 更新现有记录
+          debugLog('发送更新请求');
           savePromise = fetch('/admin/api/redirects/' + id, {
             method: 'PUT',
             headers: {
@@ -1056,6 +1090,7 @@ function getUrlsPage() {
           });
         } else {
           // 创建新记录
+          debugLog('发送创建请求');
           savePromise = fetch('/admin/api/redirects', {
             method: 'POST',
             headers: {
@@ -1072,9 +1107,21 @@ function getUrlsPage() {
         );
         
         const response = await Promise.race([savePromise, saveTimeout]);
-        const data = await response.json();
         
+        // 检查HTTP状态码
         if (!response.ok) {
+          const errorText = await response.text();
+          debugLog('保存请求失败', { status: response.status, body: errorText });
+          
+          // 尝试解析JSON响应
+          let errorMessage = '未知错误';
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || '保存失败，请重试';
+          } catch {
+            errorMessage = '保存失败: ' + response.status + ' ' + response.statusText;
+          }
+          
           // 检查是否是认证问题
           if (response.status === 401) {
             debugLog('认证失败，重定向到登录页面');
@@ -1085,9 +1132,12 @@ function getUrlsPage() {
           }
           
           // 显示API返回的错误
-          showMessage(data.error || '保存失败，请重试', true);
+          showMessage(errorMessage, true);
           return false;
         }
+        
+        const data = await response.json();
+        debugLog('保存请求响应', data);
         
         // 成功保存
         return true;
@@ -1147,9 +1197,18 @@ function getUrlsPage() {
           e.stopPropagation();
           debugLog('提交了URL表单');
           
+          // 显示提交状态
+          const saveButton = document.getElementById('save-url-btn');
+          if (saveButton) {
+            saveButton.textContent = '保存中...';
+            saveButton.disabled = true;
+          }
+          
           const id = document.getElementById('url-id').value;
           const key = document.getElementById('url-key').value;
           const url = document.getElementById('url-target').value;
+          
+          debugLog('表单数据', { id: id || '新建', key, url });
           
           // 清除错误消息
           const keyError = document.getElementById('key-error');
@@ -1170,15 +1229,36 @@ function getUrlsPage() {
             hasError = true;
           }
           
-          if (hasError) return;
+          if (hasError) {
+            // 恢复按钮状态
+            if (saveButton) {
+              saveButton.textContent = '保存';
+              saveButton.disabled = false;
+            }
+            return;
+          }
           
           // 保存数据
-          const success = await saveUrlData(id, key, url);
-          
-          if (success) {
-            toggleForm(false);
-            await loadUrlData();
-            showMessage(id ? 'URL已成功更新' : 'URL已成功创建', false);
+          try {
+            const success = await saveUrlData(id, key, url);
+            
+            if (success) {
+              debugLog('保存成功，关闭表单并刷新数据');
+              toggleForm(false);
+              await loadUrlData();
+              showMessage(id ? 'URL已成功更新' : 'URL已成功创建', false);
+            } else {
+              debugLog('保存失败');
+            }
+          } catch (error) {
+            console.error('表单提交错误:', error);
+            showMessage('提交表单时发生错误: ' + (error.message || '未知错误'), true);
+          } finally {
+            // 恢复按钮状态
+            if (saveButton) {
+              saveButton.textContent = '保存';
+              saveButton.disabled = false;
+            }
           }
         });
       } else {
