@@ -3,6 +3,9 @@
  * 使用D1 SQL数据库存储和查询重定向规则和访问统计
  */
 
+// 数据库版本常量 - 每次修改数据库结构时需要更新此版本号
+const DB_VERSION = 1;
+
 // ES模块格式 - 导出fetch函数作为默认处理入口
 export default {
   async fetch(request, env, ctx) {
@@ -27,12 +30,26 @@ async function initDatabase(env, force = false) {
       WHERE type='table' AND name='redirects'
     `).first();
     
+    // 检查版本表是否存在
+    const versionTableCheck = await env.DB.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='db_versions'
+    `).first();
+    
     // 如果表已存在且非强制模式，直接返回
     if (tableCheck && !force) {
+      // 如果版本表不存在，创建版本表（向后兼容旧数据库）
+      if (!versionTableCheck) {
+        console.log('创建数据库版本表...');
+        await createVersionTable(env);
+        results.push({ table: 'db_versions', action: 'create', result: 'success' });
+        message = "数据库表已存在，已添加版本控制";
+      }
+      
       return {
         success: true,
-        message: "数据库表已存在，初始化跳过",
-        results: []
+        message: message,
+        results: results
       };
     }
     
@@ -43,7 +60,8 @@ async function initDatabase(env, force = false) {
       // 删除所有相关表
       const tables = [
         'redirects', 'visit_logs', 'daily_stats', 
-        'geo_stats', 'device_stats', 'browser_stats', 'os_stats'
+        'geo_stats', 'device_stats', 'browser_stats', 'os_stats',
+        'db_versions' // 添加版本表到删除列表
       ];
       
       for (const table of tables) {
@@ -58,6 +76,31 @@ async function initDatabase(env, force = false) {
       
       message = "数据库表已重新创建（强制模式）";
     }
+    
+    // 创建版本表
+    const createVersionTableStmt = env.DB.prepare(`
+      CREATE TABLE IF NOT EXISTS db_versions (
+        id INTEGER PRIMARY KEY,
+        version INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        notes TEXT
+      )
+    `);
+    const versionResult = await createVersionTableStmt.run();
+    results.push({ table: 'db_versions', action: 'create', result: versionResult });
+    
+    // 插入当前版本记录
+    const timestamp = Date.now();
+    const insertVersionStmt = env.DB.prepare(`
+      INSERT INTO db_versions (version, updated_at, notes) 
+      VALUES (?, ?, ?)
+    `);
+    const insertVersionResult = await insertVersionStmt.bind(
+      DB_VERSION, 
+      timestamp, 
+      '初始数据库结构'
+    ).run();
+    results.push({ action: 'insert_version', result: insertVersionResult });
     
     // 创建重定向表
     const createRedirectsTableStmt = env.DB.prepare(`
@@ -175,6 +218,38 @@ async function initDatabase(env, force = false) {
       error: error.message
     };
   }
+}
+
+/**
+ * 创建版本表（用于向后兼容旧数据库）
+ * @param {Object} env 环境变量和绑定
+ * @returns {Object} 操作结果
+ */
+async function createVersionTable(env) {
+  // 创建版本表
+  const createVersionTableStmt = env.DB.prepare(`
+    CREATE TABLE IF NOT EXISTS db_versions (
+      id INTEGER PRIMARY KEY,
+      version INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      notes TEXT
+    )
+  `);
+  await createVersionTableStmt.run();
+  
+  // 向版本表插入当前版本记录
+  const timestamp = Date.now();
+  const insertVersionStmt = env.DB.prepare(`
+    INSERT INTO db_versions (version, updated_at, notes) 
+    VALUES (?, ?, ?)
+  `);
+  await insertVersionStmt.bind(
+    DB_VERSION, 
+    timestamp, 
+    '向后兼容迁移 - 添加版本控制'
+  ).run();
+  
+  return { success: true };
 }
 
 /**
@@ -419,14 +494,23 @@ async function handleRequest(request, env) {
   const url = new URL(request.url)
   const path = url.pathname
   
+  let dbStatus = { initialized: false, success: false, message: "未执行数据库检查" };
+  
   try {
     // 尝试检查并初始化数据库
-    const dbStatus = await checkAndInitDatabase(env);
-    if (dbStatus.initialized) {
+    dbStatus = await checkAndInitDatabase(env);
+    if (dbStatus.initialized && dbStatus.success) {
       console.log('数据库初始化完成：', dbStatus.message);
+    } else {
+      console.error('数据库初始化未完成：', dbStatus.message);
     }
   } catch (error) {
     console.error('自动数据库初始化失败:', error);
+    dbStatus = { 
+      initialized: false, 
+      success: false, 
+      message: `数据库初始化错误: ${error.message}` 
+    };
   }
   
   // 处理数据库管理API请求
@@ -460,30 +544,80 @@ async function handleRequest(request, env) {
  */
 async function checkAndInitDatabase(env) {
   try {
-    // 检查redirects表是否存在
-    const tableCheck = await env.DB.prepare(`
-      SELECT name FROM sqlite_master 
-      WHERE type='table' AND name='redirects'
-    `).first();
+    console.log('开始检查数据库状态...');
     
-    if (!tableCheck) {
-      console.log('数据库未初始化，开始执行初始化...');
-      const result = await initDatabase(env);
+    // 验证数据库绑定
+    if (!env.DB) {
+      console.error('错误: 数据库绑定未配置，请检查wrangler.toml配置');
       return { 
-        initialized: true, 
-        isNew: true,
-        message: result.message
+        initialized: false, 
+        isNew: false,
+        success: false,
+        message: "数据库绑定未配置"
       };
     }
     
-    return {
-      initialized: true,
-      isNew: false,
-      message: "数据库已经存在"
-    };
+    try {
+      // 检查redirects表是否存在
+      const tableCheck = await env.DB.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='redirects'
+      `).first();
+      
+      if (!tableCheck) {
+        console.log('数据库未初始化，开始执行初始化...');
+        const result = await initDatabase(env);
+        console.log('数据库初始化结果:', result);
+        return { 
+          initialized: result.success, 
+          isNew: true,
+          success: result.success,
+          message: result.message
+        };
+      }
+      
+      console.log('数据库已初始化，检查版本表...');
+      // 检查版本表是否存在
+      const versionTableCheck = await env.DB.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name='db_versions'
+      `).first();
+      
+      if (!versionTableCheck) {
+        console.log('版本表不存在，创建版本表...');
+        await createVersionTable(env);
+        return {
+          initialized: true,
+          isNew: false,
+          success: true,
+          message: "数据库已存在，已添加版本控制"
+        };
+      }
+      
+      // 如果来到这里，说明数据库已完全初始化
+      return {
+        initialized: true,
+        isNew: false,
+        success: true,
+        message: "数据库已经完全初始化"
+      };
+    } catch (dbError) {
+      console.error('数据库查询错误:', dbError);
+      return { 
+        initialized: false, 
+        isNew: false,
+        success: false,
+        message: `数据库查询错误: ${dbError.message}`
+      };
+    }
   } catch (error) {
     console.error('检查数据库状态失败:', error);
-    throw error;
+    return { 
+      initialized: false,
+      isNew: false,
+      success: false,
+      message: `检查数据库状态失败: ${error.message}`
+    };
   }
 }
 
@@ -494,28 +628,41 @@ async function checkAndInitDatabase(env) {
  * @returns {Response} 响应
  */
 async function handleDatabaseInit(request, env) {
-  // 验证管理员会话
-  const isAdmin = await verifyAdminSession(request, env);
-  if (!isAdmin) {
-    return jsonResponse({ 
-      success: false, 
-      message: "未授权访问" 
-    }, 403);
-  }
-
   try {
+    console.log('处理数据库初始化请求...');
+    
     // 解析请求体，检查是否为强制模式
     let force = false;
+    let skipAuth = false;
     
-    // 如果是POST请求，检查body中的force参数
+    // 如果是POST请求，检查body中的参数
     if (request.method === "POST") {
       try {
         const requestData = await request.json();
         force = !!requestData.force;
+        skipAuth = !!requestData.skipAuth;
+        console.log(`收到数据库初始化参数: force=${force}, skipAuth=${skipAuth}`);
       } catch (e) {
-        // 如果JSON解析失败，使用默认值false
+        // 如果JSON解析失败，使用默认值
         console.error("解析请求体失败", e);
       }
+    }
+    
+    // 验证管理员会话 (如果不是跳过验证模式)
+    if (!skipAuth) {
+      const isAdmin = await verifySession(request, env);
+      if (!isAdmin) {
+        console.error('数据库初始化失败: 未授权访问');
+        return new Response(JSON.stringify({ 
+          success: false, 
+          message: "未授权访问"
+        }), {
+          status: 403,
+          headers: { 'Content-Type': 'application/json' }
+        });
+      }
+    } else {
+      console.log('跳过授权验证，继续数据库初始化...');
     }
     
     console.log(`执行数据库初始化，强制模式: ${force}`);
@@ -524,14 +671,20 @@ async function handleDatabaseInit(request, env) {
     const result = await initDatabase(env, force);
     
     // 返回初始化结果
-    return jsonResponse(result, result.success ? 200 : 500);
+    return new Response(JSON.stringify(result, null, 2), {
+      status: result.success ? 200 : 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   } catch (error) {
     console.error("数据库初始化错误:", error);
-    return jsonResponse({
+    return new Response(JSON.stringify({
       success: false,
       message: `数据库初始化失败: ${error.message}`,
       error: error.message
-    }, 500);
+    }, null, 2), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
 }
 
@@ -873,10 +1026,20 @@ async function handleAdminRequest(request, env) {
     return serveLoginPage(request, env)
   }
   
+  // 处理调试API - 会话状态检查不需要验证
+  if (path === '/admin/api/debug/session') {
+    return handleSessionDebug(request, env);
+  }
+  
   // 验证会话
   const isAuthenticated = await verifySession(request, env)
   if (!isAuthenticated) {
     return Response.redirect(`${url.origin}/admin`, 302)
+  }
+  
+  // 处理需要验证的调试API
+  if (path === '/admin/api/debug/db') {
+    return handleDatabaseDebug(request, env);
   }
   
   // 根据不同路径提供不同功能
@@ -936,9 +1099,14 @@ async function verifySession(request, env) {
     return false;
   }
   
-  // 这里使用一个非常简单的会话验证方式
-  // 实际生产环境建议使用更安全的会话管理
-  const expectedToken = await generateSessionToken(ADMIN_PASSWORD);
+  // 验证从环境变量获取管理员密码
+  if (!env.ADMIN_PASSWORD) {
+    console.error('环境变量中未设置ADMIN_PASSWORD');
+    return false;
+  }
+  
+  // 使用环境变量中的密码生成预期token
+  const expectedToken = await generateSessionToken(env.ADMIN_PASSWORD);
   const tokenMatches = sessionToken === expectedToken;
   
   console.log('Token验证:', tokenMatches ? '成功' : '失败');
@@ -1042,6 +1210,40 @@ function serveLoginPage(request, env) {
       margin-bottom: 1rem;
       text-align: center;
     }
+    .debug-panel {
+      margin-top: 20px;
+      padding: 10px;
+      border-top: 1px solid #eee;
+    }
+    .debug-panel h3 {
+      font-size: 14px;
+      margin: 5px 0;
+    }
+    .debug-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .debug-button {
+      padding: 8px;
+      background-color: #f0f0f0;
+      color: #333;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    .debug-output {
+      margin-top: 10px;
+      padding: 10px;
+      background-color: #f5f5f5;
+      border-radius: 4px;
+      font-size: 12px;
+      max-height: 100px;
+      overflow-y: auto;
+      display: none;
+    }
   </style>
 </head>
 <body>
@@ -1053,6 +1255,16 @@ function serveLoginPage(request, env) {
       <input type="password" id="password" name="password" required>
       <button type="submit">登录</button>
     </form>
+    
+    <div class="debug-panel">
+      <h3>调试面板</h3>
+      <div class="debug-buttons">
+        <button id="init-db-button" class="debug-button">初始化数据库</button>
+        <button id="check-session" class="debug-button">检查会话状态</button>
+        <button id="check-db" class="debug-button">检查数据库状态</button>
+      </div>
+      <div id="debug-output" class="debug-output"></div>
+    </div>
   </div>
 
   <script>
@@ -1090,8 +1302,9 @@ function serveLoginPage(request, env) {
               window.location.href = redirectUrl;
             }, 1000);
           })
-          .catch(function() {
+          .catch(function(error) {
             // JSON解析错误，仍然尝试重定向
+            console.error('JSON解析错误:', error);
             errorElement.textContent = '登录成功，正在跳转...';
             setTimeout(function() {
               window.location.href = '/admin/dashboard';
@@ -1114,6 +1327,60 @@ function serveLoginPage(request, env) {
         console.error('登录请求错误:', error);
       });
     });
+    
+    // 初始化数据库按钮事件
+    document.getElementById('init-db-button').addEventListener('click', function() {
+      const debugOutput = document.getElementById('debug-output');
+      debugOutput.style.display = 'block';
+      debugOutput.textContent = '正在初始化数据库...';
+      
+      fetch('/admin/api/db/init', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ force: true, skipAuth: true })
+      })
+      .then(response => response.json())
+      .then(data => {
+        debugOutput.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(error => {
+        debugOutput.textContent = '初始化数据库出错: ' + error.message;
+      });
+    });
+    
+    // 检查会话状态按钮事件
+    document.getElementById('check-session').addEventListener('click', function() {
+      const debugOutput = document.getElementById('debug-output');
+      debugOutput.style.display = 'block';
+      debugOutput.textContent = '正在检查会话状态...';
+      
+      fetch('/admin/api/debug/session')
+      .then(response => response.json())
+      .then(data => {
+        debugOutput.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(error => {
+        debugOutput.textContent = '检查会话状态出错: ' + error.message;
+      });
+    });
+    
+    // 检查数据库状态按钮事件
+    document.getElementById('check-db').addEventListener('click', function() {
+      const debugOutput = document.getElementById('debug-output');
+      debugOutput.style.display = 'block';
+      debugOutput.textContent = '正在检查数据库状态...';
+      
+      fetch('/admin/api/debug/db')
+      .then(response => response.json())
+      .then(data => {
+        debugOutput.textContent = JSON.stringify(data, null, 2);
+      })
+      .catch(error => {
+        debugOutput.textContent = '检查数据库状态出错: ' + error.message;
+      });
+    });
   </script>
 </body>
 </html>`;
@@ -1130,45 +1397,72 @@ function serveLoginPage(request, env) {
  * @returns {Response} 登录响应
  */
 async function handleLogin(request, env) {
-  // 获取请求数据
-  const data = await request.json();
-  const { password } = data;
-  
-  // 验证密码
-  if (password === ADMIN_PASSWORD) {
-    // 生成会话token
-    const sessionToken = await generateSessionToken(ADMIN_PASSWORD);
+  try {
+    // 获取请求数据
+    const data = await request.json();
+    const { password } = data;
     
-    // 前端请求使用Accept头区分API调用和直接访问
-    const acceptHeader = request.headers.get('Accept') || '';
+    console.log('收到登录请求，开始验证密码...');
     
-    // 如果是API调用（JSON请求），返回JSON响应
-    if (acceptHeader.includes('application/json')) {
-      return new Response(JSON.stringify({ success: true, redirect: '/admin/dashboard' }), {
-        status: 200,
-        headers: {
-          'Content-Type': 'application/json',
-          'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
-        }
-      });
-    } 
-    // 否则直接重定向
-    else {
-      return new Response('Login successful', {
-        status: 302,
-        headers: {
-          'Location': '/admin/dashboard',
-          'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
-        }
-      });
+    // 验证密码
+    if (password === env.ADMIN_PASSWORD) {
+      console.log('密码验证成功，生成会话令牌...');
+      
+      // 生成会话token
+      const sessionToken = await generateSessionToken(env.ADMIN_PASSWORD);
+      
+      // 前端请求使用Accept头区分API调用和直接访问
+      const acceptHeader = request.headers.get('Accept') || '';
+      
+      // 日志记录会话信息
+      console.log('会话令牌生成完成，设置Cookie...');
+      console.log('请求Accept头:', acceptHeader);
+      
+      // 如果是API调用（JSON请求），返回JSON响应
+      if (acceptHeader.includes('application/json')) {
+        console.log('使用JSON响应...');
+        return new Response(JSON.stringify({ 
+          success: true, 
+          redirect: '/admin/dashboard',
+          message: '登录成功，请等待重定向'
+        }), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/json',
+            'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+          }
+        });
+      } 
+      // 否则直接重定向
+      else {
+        console.log('使用重定向响应...');
+        return new Response('Login successful', {
+          status: 302,
+          headers: {
+            'Location': '/admin/dashboard',
+            'Set-Cookie': `admin_session=${sessionToken}; HttpOnly; Path=/; SameSite=Lax; Max-Age=3600`,
+          }
+        });
+      }
     }
+    
+    // 密码错误
+    console.error('密码验证失败');
+    return new Response(JSON.stringify({ error: '密码错误' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    // 处理请求解析或其他错误
+    console.error('登录处理过程中发生错误:', error);
+    return new Response(JSON.stringify({ 
+      error: '登录处理失败', 
+      message: error.message 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
   }
-  
-  // 密码错误
-  return new Response(JSON.stringify({ error: '密码错误' }), {
-    status: 401,
-    headers: { 'Content-Type': 'application/json' }
-  });
 }
 
 /**
@@ -2975,3 +3269,105 @@ function serveStatisticsPage(request, env) {
     headers: { 'Content-Type': 'text/html; charset=utf-8' }
   });
 } 
+
+/**
+ * 处理会话状态调试API
+ * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
+ * @returns {Response} 调试信息
+ */
+async function handleSessionDebug(request, env) {
+  // 检查Cookie
+  const cookieHeader = request.headers.get('Cookie') || '';
+  const cookies = parseCookies(cookieHeader);
+  const sessionToken = cookies['admin_session'];
+  
+  // 生成预期token (不包含敏感数据)
+  const hasSession = !!sessionToken;
+  const expectedToken = await generateSessionToken(env.ADMIN_PASSWORD);
+  const tokenMatches = sessionToken === expectedToken;
+  
+  // 准备响应数据
+  const data = {
+    hasSession,
+    sessionValid: tokenMatches,
+    adminPasswordSet: env.ADMIN_PASSWORD !== 'your_secure_password_here',
+    userAgent: request.headers.get('User-Agent'),
+    cookieHeader: cookieHeader.length > 0,
+    time: new Date().toISOString(),
+  };
+  
+  // 返回JSON响应
+  return new Response(JSON.stringify(data, null, 2), {
+    status: 200,
+    headers: { 'Content-Type': 'application/json' }
+  });
+}
+
+/**
+ * 处理数据库状态调试API
+ * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
+ * @returns {Response} 调试信息
+ */
+async function handleDatabaseDebug(request, env) {
+  try {
+    // 检查数据库状态
+    const tables = [];
+    
+    // 检查数据库版本表
+    try {
+      const versionData = await env.DB.prepare(`
+        SELECT * FROM db_versions ORDER BY version DESC LIMIT 1
+      `).first();
+      
+      // 检查其他关键表
+      const tableCheck = await env.DB.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table'
+      `).all();
+      
+      if (tableCheck.results) {
+        tables.push(...tableCheck.results.map(t => t.name));
+      }
+      
+      // 准备响应数据
+      const data = {
+        status: "ok",
+        initialized: tables.includes('redirects'),
+        tables,
+        version: versionData || "未找到版本信息",
+        databaseBinding: !!env.DB,
+        time: new Date().toISOString()
+      };
+      
+      return new Response(JSON.stringify(data, null, 2), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error) {
+      // 如果无法查询版本表，可能是因为尚未创建
+      return new Response(JSON.stringify({
+        status: "error",
+        error: "数据库未初始化 - " + error.message,
+        tables,
+        databaseBinding: !!env.DB,
+        time: new Date().toISOString()
+      }, null, 2), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    }
+  } catch (error) {
+    // 处理整体错误
+    return new Response(JSON.stringify({
+      status: "error",
+      error: error.message,
+      databaseBinding: !!env.DB,
+      time: new Date().toISOString()
+    }, null, 2), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+}
