@@ -11,106 +11,180 @@ export default {
 };
 
 /**
- * 初始化数据库表结构
- * 只需在首次部署或表结构变更时执行
+ * 初始化数据库，创建必要的表
+ * @param {Object} env 环境变量和绑定
+ * @param {boolean} force 是否强制重新创建表（慎用）
+ * @returns {Object} 操作结果
  */
-async function initDatabase(env) {
+async function initDatabase(env, force = false) {
   try {
+    let results = [];
+    let message = "数据库初始化成功";
+    
+    // 检查表是否存在
+    const tableCheck = await env.DB.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='redirects'
+    `).first();
+    
+    // 如果表已存在且非强制模式，直接返回
+    if (tableCheck && !force) {
+      return {
+        success: true,
+        message: "数据库表已存在，初始化跳过",
+        results: []
+      };
+    }
+    
+    // 如果是强制模式，删除已存在的表
+    if (force && tableCheck) {
+      console.log('强制模式：删除现有表...');
+      
+      // 删除所有相关表
+      const tables = [
+        'redirects', 'visit_logs', 'daily_stats', 
+        'geo_stats', 'device_stats', 'browser_stats', 'os_stats'
+      ];
+      
+      for (const table of tables) {
+        try {
+          const dropResult = await env.DB.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+          results.push({ table, action: 'drop', result: dropResult });
+        } catch (error) {
+          console.error(`删除表 ${table} 失败:`, error);
+          results.push({ table, action: 'drop', error: error.message });
+        }
+      }
+      
+      message = "数据库表已重新创建（强制模式）";
+    }
+    
     // 创建重定向表
-    await env.DB.prepare(`
+    const createRedirectsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS redirects (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        key TEXT UNIQUE NOT NULL,
-        url TEXT NOT NULL,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        id TEXT PRIMARY KEY,
+        target_url TEXT NOT NULL,
+        title TEXT,
+        description TEXT,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL,
+        visits INTEGER DEFAULT 0,
+        is_active BOOLEAN DEFAULT 1
       )
-    `).run();
-
+    `);
+    const redirectsResult = await createRedirectsTableStmt.run();
+    results.push({ table: 'redirects', action: 'create', result: redirectsResult });
+    
     // 创建访问日志表
-    await env.DB.prepare(`
+    const createLogsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS visit_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
-        target_url TEXT NOT NULL,
-        timestamp TIMESTAMP NOT NULL,
-        ip_hash TEXT,
+        redirect_id TEXT NOT NULL,
+        timestamp INTEGER NOT NULL,
+        ip TEXT,
         user_agent TEXT,
-        country TEXT,
-        region TEXT,
-        city TEXT,
         referer TEXT,
+        country TEXT,
+        city TEXT,
+        device TEXT,
         browser TEXT,
         os TEXT,
-        device TEXT
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
+    `);
+    const logsResult = await createLogsTableStmt.run();
+    results.push({ table: 'visit_logs', action: 'create', result: logsResult });
+    
     // 创建每日统计表
-    await env.DB.prepare(`
+    const createDailyStatsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS daily_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
         date TEXT NOT NULL,
-        count INTEGER DEFAULT 1,
-        UNIQUE(redirect_key, date)
+        redirect_id TEXT NOT NULL,
+        visits INTEGER DEFAULT 0,
+        PRIMARY KEY (date, redirect_id),
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
+    `);
+    const dailyStatsResult = await createDailyStatsTableStmt.run();
+    results.push({ table: 'daily_stats', action: 'create', result: dailyStatsResult });
+    
     // 创建地理位置统计表
-    await env.DB.prepare(`
+    const createGeoStatsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS geo_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
         country TEXT NOT NULL,
-        count INTEGER DEFAULT 1,
-        UNIQUE(redirect_key, country)
+        redirect_id TEXT NOT NULL,
+        visits INTEGER DEFAULT 0,
+        PRIMARY KEY (country, redirect_id),
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
-    // 创建设备类型统计表
-    await env.DB.prepare(`
+    `);
+    const geoStatsResult = await createGeoStatsTableStmt.run();
+    results.push({ table: 'geo_stats', action: 'create', result: geoStatsResult });
+    
+    // 创建设备统计表
+    const createDeviceStatsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS device_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
         device_type TEXT NOT NULL,
-        count INTEGER DEFAULT 1,
-        UNIQUE(redirect_key, device_type)
+        redirect_id TEXT NOT NULL,
+        visits INTEGER DEFAULT 0,
+        PRIMARY KEY (device_type, redirect_id),
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
+    `);
+    const deviceStatsResult = await createDeviceStatsTableStmt.run();
+    results.push({ table: 'device_stats', action: 'create', result: deviceStatsResult });
+    
     // 创建浏览器统计表
-    await env.DB.prepare(`
+    const createBrowserStatsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS browser_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
         browser TEXT NOT NULL,
-        count INTEGER DEFAULT 1,
-        UNIQUE(redirect_key, browser)
+        redirect_id TEXT NOT NULL,
+        visits INTEGER DEFAULT 0,
+        PRIMARY KEY (browser, redirect_id),
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
+    `);
+    const browserStatsResult = await createBrowserStatsTableStmt.run();
+    results.push({ table: 'browser_stats', action: 'create', result: browserStatsResult });
+    
     // 创建操作系统统计表
-    await env.DB.prepare(`
+    const createOSStatsTableStmt = env.DB.prepare(`
       CREATE TABLE IF NOT EXISTS os_stats (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        redirect_key TEXT NOT NULL,
         os TEXT NOT NULL,
-        count INTEGER DEFAULT 1,
-        UNIQUE(redirect_key, os)
+        redirect_id TEXT NOT NULL,
+        visits INTEGER DEFAULT 0,
+        PRIMARY KEY (os, redirect_id),
+        FOREIGN KEY (redirect_id) REFERENCES redirects (id)
       )
-    `).run();
-
-    return { success: true, message: "数据库初始化成功" };
+    `);
+    const osStatsResult = await createOSStatsTableStmt.run();
+    results.push({ table: 'os_stats', action: 'create', result: osStatsResult });
+    
+    console.log('数据库初始化完成:', results);
+    
+    return {
+      success: true,
+      message,
+      results
+    };
   } catch (error) {
-    return { success: false, message: `数据库初始化失败: ${error.message}` };
+    console.error('数据库初始化失败:', error);
+    return {
+      success: false,
+      message: `数据库初始化失败: ${error.message}`,
+      error: error.message
+    };
   }
 }
 
 /**
  * 从KV数据存储迁移数据到D1数据库
  * 仅在首次迁移时执行
+ * @param {Object} env 环境变量和绑定
+ * @param {Object} options 迁移选项
+ * @returns {Object} 迁移结果
  */
-async function migrateFromKV(env) {
+async function migrateFromKV(env, options = {}) {
   try {
     // 此函数仅作为参考，实际使用时需要确保URL_REDIRECTS仍然可用
     // 如果存在KV绑定，需要从env中访问
@@ -118,132 +192,220 @@ async function migrateFromKV(env) {
     
     // 检查URL_REDIRECTS是否存在
     if (!URL_REDIRECTS) {
-      return { success: false, message: "URL_REDIRECTS绑定不存在，无法迁移" };
+      return { 
+        success: false, 
+        message: "URL_REDIRECTS绑定不存在，无法迁移",
+        redirects: { total: 0, migrated: 0 },
+        stats: { total: 0, migrated: 0 },
+        logs: { total: 0, migrated: 0 }
+      };
     }
     
-    // 迁移重定向规则
-    const keys = await URL_REDIRECTS.list();
+    // 记录迁移开始时间
+    const startTime = Date.now();
+    
+    // 初始化迁移计数
     let migratedRedirects = 0;
     let migratedStats = 0;
     let migratedLogs = 0;
-
+    let totalRedirects = 0;
+    let totalStats = 0;
+    let totalLogs = 0;
+    let errors = [];
+    
+    // 获取所有的键
+    const keys = await URL_REDIRECTS.list();
+    
+    // 总键数
+    const totalKeys = keys.keys.length;
+    console.log(`开始迁移：共找到 ${totalKeys} 个键`);
+    
+    // 计数重定向规则、统计和日志数量
+    for (const keyObj of keys.keys) {
+      const key = keyObj.name;
+      if (key.startsWith('stats:')) {
+        totalStats++;
+      } else if (key.startsWith('log:')) {
+        totalLogs++;
+      } else {
+        totalRedirects++;
+      }
+    }
+    
+    // 在元数据表中记录迁移状态
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO db_metadata (key, value, updated_at)
+      VALUES ('kv_migration_start', ?, CURRENT_TIMESTAMP)
+    `).bind(new Date().toISOString()).run();
+    
     // 迁移重定向规则
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      
-      // 跳过特殊键（统计和日志）
-      if (key.startsWith('stats:') || key.startsWith('log:')) {
-        continue;
-      }
-      
-      const url = await URL_REDIRECTS.get(key);
-      if (url) {
-        // 插入到redirects表
-        await env.DB.prepare(`
-          INSERT OR IGNORE INTO redirects (key, url)
-          VALUES (?, ?)
-        `).bind(key, url).run();
-        migratedRedirects++;
-      }
-    }
-
-    // 迁移统计数据 - 总计数
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      if (key.startsWith('stats:total:')) {
-        const redirectKey = key.replace('stats:total:', '');
-        const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
+    console.log(`开始迁移重定向规则，总数：${totalRedirects}`);
+    
+    // 使用事务批量插入以提高性能
+    await env.DB.batch([
+      env.DB.prepare(`BEGIN TRANSACTION;`).bind()
+    ]);
+    
+    try {
+      for (const keyObj of keys.keys) {
+        const key = keyObj.name;
         
-        // 插入或更新总计数
-        // 注意：在SQL结构中，总计数可以通过查询visit_logs表获得
-        migratedStats++;
-      }
-    }
-
-    // 迁移每日统计
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      if (key.startsWith('stats:daily:')) {
-        const parts = key.split(':');
-        if (parts.length === 4) {
-          const redirectKey = parts[2];
-          const dateStr = parts[3];
-          const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
-          
-          // 插入每日统计
-          await env.DB.prepare(`
-            INSERT OR IGNORE INTO daily_stats (redirect_key, date, count)
-            VALUES (?, ?, ?)
-          `).bind(redirectKey, dateStr, count).run();
-          migratedStats++;
+        // 跳过特殊键（统计和日志）
+        if (key.startsWith('stats:') || key.startsWith('log:')) {
+          continue;
+        }
+        
+        try {
+          const url = await URL_REDIRECTS.get(key);
+          if (url) {
+            // 插入到redirects表
+            await env.DB.prepare(`
+              INSERT OR IGNORE INTO redirects (key, url)
+              VALUES (?, ?)
+            `).bind(key, url).run();
+            migratedRedirects++;
+            
+            // 每10个记录输出一次进度
+            if (migratedRedirects % 10 === 0) {
+              console.log(`已迁移 ${migratedRedirects}/${totalRedirects} 个重定向规则`);
+            }
+          }
+        } catch (error) {
+          console.error(`迁移重定向规则失败: ${key}`, error);
+          errors.push(`重定向规则 ${key}: ${error.message}`);
         }
       }
+      
+      // 提交事务
+      await env.DB.prepare(`COMMIT;`).run();
+    } catch (error) {
+      // 如果出错，回滚事务
+      await env.DB.prepare(`ROLLBACK;`).run();
+      throw error;
     }
-
-    // 迁移地理位置统计
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      if (key.startsWith('stats:geo:')) {
-        const redirectKey = key.replace('stats:geo:', '');
-        const geoStatsStr = await URL_REDIRECTS.get(key);
-        
-        if (geoStatsStr) {
+    
+    console.log(`重定向规则迁移完成，成功: ${migratedRedirects}/${totalRedirects}`);
+    
+    // 迁移统计数据 - 使用事务
+    console.log(`开始迁移统计数据，总数：${totalStats}`);
+    
+    await env.DB.batch([
+      env.DB.prepare(`BEGIN TRANSACTION;`).bind()
+    ]);
+    
+    try {
+      // 迁移每日统计
+      for (const keyObj of keys.keys) {
+        const key = keyObj.name;
+        if (key.startsWith('stats:daily:')) {
           try {
-            const geoStats = JSON.parse(geoStatsStr);
-            for (const country in geoStats) {
-              if (Object.prototype.hasOwnProperty.call(geoStats, country)) {
-                // 插入地理位置统计
-                await env.DB.prepare(`
-                  INSERT OR IGNORE INTO geo_stats (redirect_key, country, count)
-                  VALUES (?, ?, ?)
-                `).bind(redirectKey, country, geoStats[country]).run();
-                migratedStats++;
+            const parts = key.split(':');
+            if (parts.length === 4) {
+              const redirectKey = parts[2];
+              const dateStr = parts[3];
+              const count = parseInt(await URL_REDIRECTS.get(key) || '0', 10);
+              
+              // 插入每日统计
+              await env.DB.prepare(`
+                INSERT OR IGNORE INTO daily_stats (redirect_key, date, count)
+                VALUES (?, ?, ?)
+              `).bind(redirectKey, dateStr, count).run();
+              migratedStats++;
+            }
+          } catch (error) {
+            console.error(`迁移每日统计失败: ${key}`, error);
+            errors.push(`每日统计 ${key}: ${error.message}`);
+          }
+        } else if (key.startsWith('stats:geo:')) {
+          try {
+            const redirectKey = key.replace('stats:geo:', '');
+            const geoStatsStr = await URL_REDIRECTS.get(key);
+            
+            if (geoStatsStr) {
+              const geoStats = JSON.parse(geoStatsStr);
+              for (const country in geoStats) {
+                if (Object.prototype.hasOwnProperty.call(geoStats, country)) {
+                  // 插入地理位置统计
+                  await env.DB.prepare(`
+                    INSERT OR IGNORE INTO geo_stats (redirect_key, country, count)
+                    VALUES (?, ?, ?)
+                  `).bind(redirectKey, country, geoStats[country]).run();
+                  migratedStats++;
+                }
               }
             }
-          } catch (e) {
-            console.error(`解析地理统计数据失败: ${e.message}`);
+          } catch (error) {
+            console.error(`迁移地理位置统计失败: ${key}`, error);
+            errors.push(`地理位置统计 ${key}: ${error.message}`);
           }
         }
-      }
-    }
-
-    // 类似地，迁移设备、浏览器和操作系统统计
-    // 这里省略具体实现，原理与地理位置统计类似
-
-    // 迁移访问日志
-    for (const keyObj of keys.keys) {
-      const key = keyObj.name;
-      if (key.startsWith('log:')) {
-        const logData = await URL_REDIRECTS.get(key);
-        if (logData) {
-          try {
-            const log = JSON.parse(logData);
-            // 插入访问日志
-            await env.DB.prepare(`
-              INSERT INTO visit_logs (
-                redirect_key, target_url, timestamp, ip_hash, 
-                user_agent, country, region, city, 
-                referer, browser, os, device
-              ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            `).bind(
-              log.key, log.targetUrl, log.timestamp, log.ip,
-              log.userAgent, log.country, log.region, log.city,
-              log.referer, log.browser, log.os, log.device
-            ).run();
-            migratedLogs++;
-          } catch (e) {
-            console.error(`解析日志数据失败: ${e.message}`);
-          }
+        
+        // 每10个记录输出一次进度
+        if (migratedStats % 10 === 0) {
+          console.log(`已迁移 ${migratedStats} 个统计数据`);
         }
       }
+      
+      // 提交事务
+      await env.DB.prepare(`COMMIT;`).run();
+    } catch (error) {
+      // 如果出错，回滚事务
+      await env.DB.prepare(`ROLLBACK;`).run();
+      throw error;
     }
-
-    return { 
-      success: true, 
-      message: `迁移成功: ${migratedRedirects}个重定向规则, ${migratedStats}条统计记录, ${migratedLogs}条日志` 
+    
+    console.log(`统计数据迁移完成，成功: ${migratedStats}`);
+    
+    // 记录迁移完成时间和状态
+    const endTime = Date.now();
+    const duration = (endTime - startTime) / 1000; // 秒
+    
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO db_metadata (key, value, updated_at)
+      VALUES ('kv_migration_end', ?, CURRENT_TIMESTAMP)
+    `).bind(new Date().toISOString()).run();
+    
+    await env.DB.prepare(`
+      INSERT OR REPLACE INTO db_metadata (key, value, updated_at)
+      VALUES ('kv_migration_status', ?, CURRENT_TIMESTAMP)
+    `).bind(JSON.stringify({
+      redirects: { total: totalRedirects, migrated: migratedRedirects },
+      stats: { total: totalStats, migrated: migratedStats },
+      logs: { total: totalLogs, migrated: migratedLogs },
+      duration: duration,
+      errors: errors.length > 0 ? errors : null,
+      completed: true
+    })).run();
+    
+    return {
+      success: true,
+      message: `数据迁移成功，用时${duration.toFixed(2)}秒`,
+      redirects: { total: totalRedirects, migrated: migratedRedirects },
+      stats: { total: totalStats, migrated: migratedStats },
+      logs: { total: totalLogs, migrated: migratedLogs },
+      duration: duration,
+      errors: errors.length > 0 ? errors : null
     };
   } catch (error) {
-    return { success: false, message: `迁移失败: ${error.message}` };
+    console.error('数据迁移失败:', error);
+    
+    // 记录失败状态
+    try {
+      await env.DB.prepare(`
+        INSERT OR REPLACE INTO db_metadata (key, value, updated_at)
+        VALUES ('kv_migration_status', ?, CURRENT_TIMESTAMP)
+      `).bind(JSON.stringify({
+        error: error.message,
+        completed: false
+      })).run();
+    } catch (dbError) {
+      console.error('记录迁移失败状态时出错:', dbError);
+    }
+    
+    return { 
+      success: false, 
+      message: `数据迁移失败: ${error.message}` 
+    };
   }
 }
 
@@ -256,6 +418,25 @@ async function migrateFromKV(env) {
 async function handleRequest(request, env) {
   const url = new URL(request.url)
   const path = url.pathname
+  
+  try {
+    // 尝试检查并初始化数据库
+    const dbStatus = await checkAndInitDatabase(env);
+    if (dbStatus.initialized) {
+      console.log('数据库初始化完成：', dbStatus.message);
+    }
+  } catch (error) {
+    console.error('自动数据库初始化失败:', error);
+  }
+  
+  // 处理数据库管理API请求
+  if (path === '/admin/api/db/init' && request.method === 'POST') {
+    return handleDatabaseInit(request, env);
+  }
+  
+  if (path === '/admin/api/db/migrate-kv' && request.method === 'POST') {
+    return handleKVMigration(request, env);
+  }
   
   // 检查是否为管理面板请求
   if (path.startsWith('/admin')) {
@@ -270,6 +451,127 @@ async function handleRequest(request, env) {
   
   // 处理常规重定向请求
   return handleRedirectRequest(request, env)
+}
+
+/**
+ * 检查数据库是否已初始化，如果未初始化则执行初始化
+ * @param {Object} env 环境变量和绑定
+ * @returns {Object} 初始化状态和消息
+ */
+async function checkAndInitDatabase(env) {
+  try {
+    // 检查redirects表是否存在
+    const tableCheck = await env.DB.prepare(`
+      SELECT name FROM sqlite_master 
+      WHERE type='table' AND name='redirects'
+    `).first();
+    
+    if (!tableCheck) {
+      console.log('数据库未初始化，开始执行初始化...');
+      const result = await initDatabase(env);
+      return { 
+        initialized: true, 
+        isNew: true,
+        message: result.message
+      };
+    }
+    
+    return {
+      initialized: true,
+      isNew: false,
+      message: "数据库已经存在"
+    };
+  } catch (error) {
+    console.error('检查数据库状态失败:', error);
+    throw error;
+  }
+}
+
+/**
+ * 处理数据库初始化API请求
+ * @param {Request} request 请求对象
+ * @param {Object} env 环境变量
+ * @returns {Response} 响应
+ */
+async function handleDatabaseInit(request, env) {
+  // 验证管理员会话
+  const isAdmin = await verifyAdminSession(request, env);
+  if (!isAdmin) {
+    return jsonResponse({ 
+      success: false, 
+      message: "未授权访问" 
+    }, 403);
+  }
+
+  try {
+    // 解析请求体，检查是否为强制模式
+    let force = false;
+    
+    // 如果是POST请求，检查body中的force参数
+    if (request.method === "POST") {
+      try {
+        const requestData = await request.json();
+        force = !!requestData.force;
+      } catch (e) {
+        // 如果JSON解析失败，使用默认值false
+        console.error("解析请求体失败", e);
+      }
+    }
+    
+    console.log(`执行数据库初始化，强制模式: ${force}`);
+    
+    // 调用初始化函数，传入force参数
+    const result = await initDatabase(env, force);
+    
+    // 返回初始化结果
+    return jsonResponse(result, result.success ? 200 : 500);
+  } catch (error) {
+    console.error("数据库初始化错误:", error);
+    return jsonResponse({
+      success: false,
+      message: `数据库初始化失败: ${error.message}`,
+      error: error.message
+    }, 500);
+  }
+}
+
+/**
+ * 处理KV数据迁移API请求
+ * @param {Request} request 客户端请求
+ * @param {Object} env 环境变量和绑定
+ * @returns {Response} API响应
+ */
+async function handleKVMigration(request, env) {
+  // 验证管理员权限
+  const isAdmin = await verifySession(request, env);
+  if (!isAdmin) {
+    return new Response(JSON.stringify({ success: false, message: "未授权" }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
+  
+  try {
+    // 获取请求数据，支持配置选项
+    const data = await request.json().catch(() => ({}));
+    const options = data.options || {};
+    
+    // 执行迁移
+    const result = await migrateFromKV(env, options);
+    
+    return new Response(JSON.stringify(result), {
+      status: result.success ? 200 : 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  } catch (error) {
+    return new Response(JSON.stringify({ 
+      success: false, 
+      message: `KV数据迁移失败: ${error.message}` 
+    }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' }
+    });
+  }
 }
 
 /**
