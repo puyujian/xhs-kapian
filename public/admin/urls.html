@@ -1,0 +1,848 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>URL管理 - URL重定向系统</title>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      line-height: 1.6;      color: #333;      max-width: 1200px;      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    header {
+      background-color: #fff;
+      padding: 20px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);      margin-bottom: 20px;    }    h1 {      color: #2c3e50;
+      margin: 0;
+    }
+    .nav {
+      margin-top: 15px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 15px;    }    .nav a {      color: #3498db;      text-decoration: none;
+      padding: 5px 10px;
+      border-radius: 3px;
+      transition: background-color 0.3s;
+    }
+    .nav a:hover {
+      background-color: #eaf2f8;
+    }
+    .nav a.active {
+      background-color: #3498db;
+      color: white;
+    }
+    .main-content {
+      background-color: #fff;
+      padding: 25px;
+      border-radius: 5px;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);    }    .form-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 500;
+    }    input[type="text"],
+    input[type="password"],
+    input[type="url"] {
+      width: 100%;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 3px;
+      font-size: 16px;
+      box-sizing: border-box;
+    }
+    button {
+      background-color: #3498db;
+      color: white;
+      border: none;
+      padding: 10px 15px;
+      border-radius: 3px;
+      cursor: pointer;
+      font-size: 16px;
+      transition: background-color 0.3s;
+    }
+    button:hover {
+      background-color: #2980b9;
+    }
+    button.delete-btn {
+        background-color: #e74c3c;
+    }
+    button.delete-btn:hover {
+        background-color: #c0392b;
+    }
+    button:disabled {
+        background-color: #bdc3c7;
+        cursor: not-allowed;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    th, td {
+      padding: 12px 15px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+      word-break: break-all; /* Prevent long URLs from breaking layout */
+    }
+    th {      background-color: #f8f9fa;
+    }
+    tr:hover {
+      background-color: #f1f1f1;
+    }
+    .error {
+      color: #e74c3c;      margin-top: 5px;    }    .success {
+      color: #2ecc71;
+      margin-top: 5px;
+    }
+    #error-message {
+        padding: 10px;
+        background-color: #ffecec;
+        border: 1px solid #f5c6cb;
+        border-radius: 4px;
+        margin-bottom: 15px;
+    }
+    #form-message {
+        padding: 5px;
+        border-radius: 3px;
+        margin-top: 10px;
+    }
+    #form-message.error {
+        background-color: #ffecec;
+        border: 1px solid #f5c6cb;
+    }
+     #form-message.success {
+        background-color: #eafaf1;
+        border: 1px solid #c3e6cb;
+    }
+    @media (max-width: 768px) {
+      .nav {
+        flex-direction: column;
+        gap: 5px;
+      }
+      th, td {
+        padding: 8px 10px;
+      }
+      /* Improve table display on small screens */
+      table, thead, tbody, th, td, tr {
+        display: block;
+      }
+      thead tr {
+        position: absolute;
+        top: -9999px;
+        left: -9999px;
+      }
+      tr { border: 1px solid #ccc; margin-bottom: 10px; }
+      td {
+        border: none;
+        border-bottom: 1px solid #eee;
+        position: relative;
+        padding-left: 50%;
+        white-space: normal;
+        text-align:left;
+      }
+      td:before {
+        position: absolute;
+        top: 6px;
+        left: 6px;
+        width: 45%;
+        padding-right: 10px;
+        white-space: nowrap;
+        text-align:left;
+        font-weight: bold;
+        content: attr(data-label); /* Use data-label for header */
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>URL重定向系统</h1>
+    <div class="nav">
+      <a href="/admin/">首页</a>
+      <a href="/admin/urls.html" class="active">URL管理</a>
+      <a href="/admin/stats.html">访问统计</a>
+      <a href="/" target="_blank">访问前台</a>
+      <a href="#" id="logout" style="margin-left: auto;">退出登录</a>
+    </div>
+  </header>
+
+  <div class="main-content">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+      <h2 style="margin: 0;">URL管理</h2>
+      <button id="add-url-btn">添加新URL</button>
+    </div>
+
+    <div id="url-form-container" style="display: none; background-color: #f8f9fa; padding: 20px; margin-bottom: 20px; border-radius: 5px;">
+      <h3 id="form-title">添加新URL</h3>
+      <form id="url-form">
+        <input type="hidden" id="url-id" value="">
+        <div class="form-group">
+          <label for="url-key">短链接键值 (key)</label>
+          <input type="text" id="url-key" name="key" required placeholder="例如: abc123">
+          <div id="key-error" class="error"></div>
+        </div>
+        <div class="form-group">
+          <label for="url-target">目标URL</label>
+          <input type="url" id="url-target" name="url" required placeholder="例如: https://example.com/some/long/path">
+          <div id="url-error" class="error"></div>
+        </div>
+        <div style="display: flex; gap: 10px;">
+          <button type="submit" id="save-url-btn">保存</button>
+          <button type="button" id="cancel-url-btn">取消</button>
+        </div>
+        <div id="form-message" style="margin-top: 10px;"></div>
+      </form>
+    </div>
+
+    <div id="urls-table-container">
+      <div id="loading-message">正在加载URL数据...</div>
+      <div id="error-message" style="display: none; color: red;"></div>
+      <table id="urls-table" style="display: none;">
+        <thead>
+          <tr>
+            <th>短链接</th>
+            <th>目标URL</th>
+            <th>创建时间</th>
+            <!-- <th>访问次数</th> --> <!-- Temporarily removed as API doesn't provide it directly -->
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="urls-list">
+          <!-- 数据将通过JavaScript动态加载 -->
+        </tbody>
+      </table>
+      <div id="no-urls-message" style="display: none; text-align: center; padding: 20px;">
+        没有找到任何URL记录。点击"添加新URL"按钮创建第一个重定向链接。
+      </div>
+      <button id="retry-load-btn" style="display: none; margin-top: 10px;">重试加载</button>
+    </div>
+  </div>
+
+  <script>
+    // --- Base Page Scripts ---
+    // 检查登录状态函数
+    function checkAuth() {
+      const token = localStorage.getItem('token');
+      // 如果页面不是登录页面，且没有找到token，则重定向到登录页
+      if (window.location.pathname !== '/admin/login.html' && !token) {
+        console.log('未检测到认证令牌，重定向到登录页面');
+        window.location.href = '/admin/login.html'; // Redirect to static login page
+        return false;
+      }
+      return true;
+    }
+
+    // 退出登录
+    const logoutButton = document.getElementById('logout');
+    if (logoutButton) {
+        logoutButton.addEventListener('click', function(e) {
+          e.preventDefault();
+          localStorage.removeItem('token');
+          localStorage.removeItem('username');
+          window.location.href = '/admin/login.html'; // Redirect to static login page
+        });
+    }
+
+    // --- URL Management Page Scripts ---
+    // 全局变量定义
+    let redirects = [];
+    // let stats = {}; // Stats are not directly fetched here anymore
+    let isLoadingData = false;
+    let apiTimeout = 15000; // 15秒API超时
+
+    // 调试工具
+    function debugLog(message, data) {
+      console.log('[URL管理]', message, data || '');
+    }
+
+    // 工具函数：格式化日期 (API now returns formatted string, but keep for potential future use)
+    function formatDate(dateString) {
+      if (!dateString) return '';
+      try {
+        const date = new Date(dateString);
+        // Check if date is valid before formatting
+        if (isNaN(date.getTime())) {
+            return dateString; // Return original string if invalid
+        }
+        return date.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      } catch (e) {
+        console.error("Error formatting date:", dateString, e);
+        return dateString; // Return original string on error
+      }
+    }
+
+    // 显示/隐藏表单
+    function toggleForm(show, isEdit = false) {
+      debugLog('切换表单显示', { show, isEdit });
+      const container = document.getElementById('url-form-container');
+      if (!container) {
+        debugLog('错误: 找不到表单容器元素');
+        return;
+      }
+
+      container.style.display = show ? 'block' : 'none';
+
+      if (show) {
+        document.getElementById('form-title').textContent = isEdit ? '编辑URL' : '添加新URL';
+        if (!isEdit) {
+          // 清空表单
+          document.getElementById('url-id').value = '';
+          document.getElementById('url-key').value = '';
+          document.getElementById('url-target').value = '';
+        }
+        // 清除任何错误消息
+        document.getElementById('key-error').textContent = '';
+        document.getElementById('url-error').textContent = '';
+        document.getElementById('form-message').textContent = '';
+        document.getElementById('form-message').className = ''; // Clear message style
+      }
+    }
+
+    // 显示列表加载错误消息
+    function showListError(message) {
+      const errorElement = document.getElementById('error-message');
+      if (errorElement) {
+        errorElement.textContent = message;
+        errorElement.style.display = 'block';
+      }
+
+      const loadingElement = document.getElementById('loading-message');
+      if (loadingElement) {
+        loadingElement.style.display = 'none';
+      }
+
+      const retryButton = document.getElementById('retry-load-btn');
+      if (retryButton) {
+        retryButton.style.display = 'block';
+      }
+
+      const table = document.getElementById('urls-table');
+       if (table) {
+           table.style.display = 'none';
+       }
+       const noUrlsMessage = document.getElementById('no-urls-message');
+       if (noUrlsMessage) {
+           noUrlsMessage.style.display = 'none';
+       }
+
+      console.error('URL管理错误:', message);
+    }
+
+    // 显示表单消息
+    function showFormMessage(message, isError) {
+      const messageElement = document.getElementById('form-message');
+      if (!messageElement) {
+        debugLog('错误: 找不到表单消息元素');
+        return;
+      }
+
+      messageElement.textContent = message;
+      messageElement.className = isError ? 'error' : 'success';
+
+      // 3秒后清除消息
+      setTimeout(() => {
+        if (messageElement.textContent === message) { // Only clear if message hasn't changed
+            messageElement.textContent = '';
+            messageElement.className = '';
+        }
+      }, 3000);
+    }
+
+
+    // 加载URL数据
+    async function loadUrlData() {
+      debugLog('开始加载URL数据');
+
+      if (isLoadingData) {
+        debugLog('已有加载请求正在进行中，跳过');
+        return;
+      }
+
+      if (!checkAuth()) return; // Ensure user is authenticated
+
+      isLoadingData = true;
+
+      try {
+        const token = localStorage.getItem('token');
+
+        // UI updates for loading state
+        const errorElement = document.getElementById('error-message');
+        if (errorElement) errorElement.style.display = 'none';
+        const loadingElement = document.getElementById('loading-message');
+        if (loadingElement) loadingElement.style.display = 'block';
+        const retryButton = document.getElementById('retry-load-btn');
+        if (retryButton) retryButton.style.display = 'none';
+        const table = document.getElementById('urls-table');
+        if (table) table.style.display = 'none';
+        const noUrlsMessage = document.getElementById('no-urls-message');
+        if (noUrlsMessage) noUrlsMessage.style.display = 'none';
+
+
+        // 获取所有重定向，添加超时处理
+        debugLog('发送获取重定向请求 to /admin/api/redirects');
+        const redirectsPromise = fetch('/admin/api/redirects', {
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+
+        // 添加超时处理
+        const redirectsTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('获取重定向数据超时')), apiTimeout)
+        );
+
+        const redirectsResponse = await Promise.race([redirectsPromise, redirectsTimeout]);
+
+        if (!redirectsResponse.ok) {
+          if (redirectsResponse.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            checkAuth(); // Will trigger redirect
+            return;
+          }
+          const errorText = await redirectsResponse.text();
+          debugLog('API响应错误', { status: redirectsResponse.status, body: errorText });
+          throw new Error(`API响应错误: ${redirectsResponse.status} - ${errorText}`);
+        }
+
+        const redirectsData = await redirectsResponse.json();
+        // API returns { redirects: [...] } or { redirects: { results: [...] } }
+        redirects = redirectsData.redirects?.results || redirectsData.redirects || [];
+        if (!Array.isArray(redirects)) {
+            console.error("Received non-array data for redirects:", redirectsData);
+            redirects = []; // Fallback to empty array
+            throw new Error("从API接收到的重定向数据格式无效。");
+        }
+        debugLog('成功获取重定向数据', redirects);
+
+        // 渲染表格
+        renderTable();
+
+      } catch (error) {
+        debugLog('加载URL数据时出错', error);
+        showListError('加载URL数据失败: ' + error.message);
+      } finally {
+        isLoadingData = false;
+        const loadingElement = document.getElementById('loading-message');
+        if (loadingElement) loadingElement.style.display = 'none';
+        debugLog('URL数据加载完成');
+      }
+    }
+
+    // 渲染表格
+    function renderTable() {
+      debugLog('开始渲染表格', { redirectsCount: redirects.length });
+      const tableBody = document.getElementById('urls-list');
+      const table = document.getElementById('urls-table');
+      const noUrlsMessage = document.getElementById('no-urls-message');
+      const errorMessage = document.getElementById('error-message'); // Get error message element
+
+      if (!tableBody || !table || !noUrlsMessage || !errorMessage) {
+         debugLog('错误: 渲染表格所需的元素未找到');
+         showListError('无法渲染表格，页面结构可能已损坏。');
+         return;
+      }
+
+      // 清空现有表格内容
+      tableBody.innerHTML = '';
+      errorMessage.style.display = 'none'; // Hide previous errors
+
+      if (redirects.length === 0) {
+        debugLog('没有重定向数据，显示空消息');
+        table.style.display = 'none';
+        noUrlsMessage.style.display = 'block';
+        return;
+      }
+
+      // 显示表格，隐藏空消息
+      table.style.display = 'table'; // Use 'table' for proper display
+      noUrlsMessage.style.display = 'none';
+
+      redirects.forEach(item => {
+        const row = tableBody.insertRow();
+
+        // Add data-label attributes for mobile view
+        const keyCell = row.insertCell();
+        keyCell.textContent = item.key;
+        keyCell.setAttribute('data-label', '短链接');
+
+        const urlCell = row.insertCell();
+        urlCell.textContent = item.url; // Let CSS handle wrapping/overflow
+        urlCell.title = item.url; // Tooltip for full URL
+        urlCell.setAttribute('data-label', '目标URL');
+
+
+        const createdCell = row.insertCell();
+        // Use the formatted date string directly from the API response
+        createdCell.textContent = item.created_at ? formatDate(item.created_at) : 'N/A';
+        createdCell.setAttribute('data-label', '创建时间');
+
+
+        // Visits cell removed for now
+        // const visitsCell = row.insertCell();
+        // visitsCell.textContent = 'N/A'; // Placeholder
+        // visitsCell.setAttribute('data-label', '访问次数');
+
+
+        const actionsCell = row.insertCell();
+        actionsCell.style.whiteSpace = 'nowrap'; // Prevent button wrapping
+        actionsCell.setAttribute('data-label', '操作');
+
+
+        const editButton = document.createElement('button');
+        editButton.textContent = '编辑';
+        editButton.classList.add('edit-btn');
+        editButton.style.marginRight = '5px';
+        editButton.dataset.id = item.id; // Store ID on the button
+        editButton.addEventListener('click', handleEditClick);
+        actionsCell.appendChild(editButton);
+
+        const deleteButton = document.createElement('button');
+        deleteButton.textContent = '删除';
+        deleteButton.classList.add('delete-btn');
+        deleteButton.dataset.id = item.id; // Store ID on the button
+        deleteButton.addEventListener('click', handleDeleteClick);
+        actionsCell.appendChild(deleteButton);
+      });
+
+      debugLog('表格渲染完成');
+    }
+
+    // 处理编辑按钮点击事件
+    function handleEditClick(event) {
+      const button = event.target;
+      const id = button.dataset.id;
+      debugLog('编辑按钮点击', { id });
+      if (id) {
+        try {
+          const numericId = parseInt(id, 10);
+          if (!isNaN(numericId)) {
+            editRedirect(numericId);
+          } else {
+            debugLog('错误: 无效的数字ID', { id });
+            showFormMessage('无法编辑：无效的 ID', true);
+          }
+        } catch (error) {
+           debugLog('处理编辑点击时出错', { error });
+           showFormMessage('编辑操作失败', true);
+        }
+      } else {
+        debugLog('错误: 未在按钮上找到 ID');
+        showFormMessage('无法编辑：缺少 ID', true);
+      }
+    }
+
+     // 处理删除按钮点击事件
+    function handleDeleteClick(event) {
+        const button = event.target;
+        const id = button.dataset.id;
+        debugLog('删除按钮点击', { id });
+        if (id) {
+            try {
+                const numericId = parseInt(id, 10);
+                if (!isNaN(numericId)) {
+                    deleteRedirect(numericId); // Call async delete function
+                } else {
+                    debugLog('错误: 无效的数字ID', { id });
+                    showFormMessage('无法删除：无效的 ID', true);
+                }
+            } catch (error) {
+                debugLog('处理删除点击时出错', { error });
+                showFormMessage('删除操作失败', true);
+            }
+        } else {
+            debugLog('错误: 未在按钮上找到 ID');
+            showFormMessage('无法删除：缺少 ID', true);
+        }
+    }
+
+    // 编辑重定向 - 填充表单
+    function editRedirect(id) {
+      debugLog('编辑重定向', { id });
+
+      const redirect = redirects.find(item => parseInt(item.id, 10) === id);
+      if (!redirect) {
+        debugLog('错误: 找不到ID为' + id + '的重定向');
+        showFormMessage('找不到要编辑的URL记录', true);
+        return;
+      }
+
+      // 填充表单
+      document.getElementById('url-id').value = id; // Use numeric ID
+      document.getElementById('url-key').value = redirect.key;
+      document.getElementById('url-target').value = redirect.url;
+
+      // 显示表单
+      toggleForm(true, true);
+
+      // 确保滚动到表单位置
+      const formContainer = document.getElementById('url-form-container');
+      if (formContainer) {
+          formContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    // 删除重定向 - 发送API请求
+    async function deleteRedirect(id) {
+      debugLog('删除重定向', { id });
+
+      if (!confirm(`确定要删除这个URL重定向 (ID: ${id}) 吗？此操作无法撤销。`)) {
+        return;
+      }
+
+      // Disable button temporarily? (Optional)
+
+      try {
+        const token = localStorage.getItem('token');
+        if (!checkAuth()) return; // Re-check auth
+
+        const deletePromise = fetch('/admin/api/redirects/' + id, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+
+        const deleteTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('删除操作超时')), apiTimeout)
+        );
+
+        const response = await Promise.race([deletePromise, deleteTimeout]);
+
+        if (!response.ok) {
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            checkAuth(); // Will trigger redirect
+            return;
+          }
+          let errorMsg = '删除失败，请重试';
+          try {
+              const error = await response.json();
+              errorMsg = error.error || errorMsg;
+          } catch (e) {
+              // Ignore if response is not JSON
+          }
+          showFormMessage(errorMsg, true); // Show message near form or table?
+          return;
+        }
+
+        // 成功删除
+        showFormMessage('URL已成功删除', false); // Show temporary success message
+        await loadUrlData(); // 重新加载数据以更新表格
+
+      } catch (error) {
+        console.error('删除URL错误:', error);
+        showFormMessage('删除失败: ' + (error.message || '未知错误'), true);
+      } finally {
+          // Re-enable button if disabled (Optional)
+      }
+    }
+
+    // 保存URL数据 (添加或更新)
+    async function saveUrlData(id, key, url) {
+      const numericId = id ? parseInt(id, 10) : null;
+      debugLog('保存URL数据', { id, numericId, key, url });
+
+      // Basic client-side validation
+      document.getElementById('key-error').textContent = '';
+      document.getElementById('url-error').textContent = '';
+      let isValid = true;
+      if (!key) {
+          document.getElementById('key-error').textContent = '键不能为空';
+          isValid = false;
+      }
+      if (!url) {
+          document.getElementById('url-error').textContent = 'URL不能为空';
+          isValid = false;
+      } else {
+          try {
+              new URL(url); // Check if URL is valid format
+          } catch (_) {
+              document.getElementById('url-error').textContent = 'URL格式无效';
+              isValid = false;
+          }
+      }
+      if (!isValid) {
+          return false; // Prevent API call if basic validation fails
+      }
+
+
+      try {
+        const token = localStorage.getItem('token');
+        if (!checkAuth()) return false; // Re-check auth
+
+        let savePromise;
+        const apiUrl = numericId ? `/admin/api/redirects/${numericId}` : '/admin/api/redirects';
+        const method = numericId ? 'PUT' : 'POST';
+
+        debugLog(`发送 ${method} 请求到 ${apiUrl}`);
+        savePromise = fetch(apiUrl, {
+          method: method,
+          headers: {
+            'Authorization': 'Bearer ' + token,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ key, url })
+        });
+
+        const saveTimeout = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('保存操作超时')), apiTimeout)
+        );
+
+        const response = await Promise.race([savePromise, saveTimeout]);
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          debugLog('保存请求失败', { status: response.status, body: errorText });
+
+          let errorMessage = '保存失败，请重试';
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || errorMessage;
+          } catch {
+            // Use status text if not JSON
+            errorMessage = `保存失败: ${response.status} ${response.statusText}`;
+          }
+
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            checkAuth(); // Will trigger redirect
+            return false;
+          }
+          if (response.status === 409) { // Conflict - Key already exists
+              document.getElementById('key-error').textContent = errorMessage;
+          } else {
+              showFormMessage(errorMessage, true);
+          }
+          return false;
+        }
+
+        const data = await response.json();
+        debugLog('保存请求响应', data);
+
+        // 成功保存
+        showFormMessage(numericId ? 'URL已成功更新' : 'URL已成功添加', false);
+        toggleForm(false); // 关闭表单
+        await loadUrlData(); // 重新加载数据
+        return true;
+      } catch (error) {
+        console.error('保存URL错误:', error);
+        showFormMessage('保存失败: ' + (error.message || '未知错误'), true);
+        return false;
+      }
+    }
+
+    // 初始化事件处理函数
+    function initEventListeners() {
+      debugLog('初始化事件监听器');
+
+      // 添加URL按钮事件
+      const addUrlBtn = document.getElementById('add-url-btn');
+      if (addUrlBtn) {
+        addUrlBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          debugLog('点击了添加URL按钮');
+          toggleForm(true, false);
+          // Scroll to form
+          const formContainer = document.getElementById('url-form-container');
+          if (formContainer) {
+              formContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+        });
+      } else {
+        debugLog('错误: 找不到添加URL按钮元素');
+      }
+
+      // 取消按钮事件
+      const cancelUrlBtn = document.getElementById('cancel-url-btn');
+      if (cancelUrlBtn) {
+        cancelUrlBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          debugLog('点击了取消按钮');
+          toggleForm(false);
+        });
+      } else {
+        debugLog('错误: 找不到取消按钮元素');
+      }
+
+      // 重试加载按钮事件
+      const retryLoadBtn = document.getElementById('retry-load-btn');
+      if (retryLoadBtn) {
+        retryLoadBtn.addEventListener('click', function(e) {
+          e.preventDefault();
+          debugLog('点击了重试加载按钮');
+          loadUrlData();
+        });
+      } else {
+        debugLog('错误: 找不到重试按钮');
+      }
+
+      // 表单提交事件
+      const urlForm = document.getElementById('url-form');
+      if (urlForm) {
+        urlForm.addEventListener('submit', async function(e) {
+          e.preventDefault();
+          debugLog('提交了URL表单');
+
+          const saveButton = document.getElementById('save-url-btn');
+          if (saveButton) {
+            saveButton.disabled = true;
+            saveButton.textContent = '正在保存...';
+          }
+
+          const idValue = document.getElementById('url-id').value;
+          const id = idValue ? parseInt(idValue, 10) : ''; // Keep as empty string or null if not present
+          const key = document.getElementById('url-key').value.trim();
+          const url = document.getElementById('url-target').value.trim();
+
+          debugLog('表单数据', { idValue, id, key, url });
+
+          await saveUrlData(id, key, url); // saveUrlData now returns boolean
+
+          // 恢复按钮状态 regardless of success/failure
+          if (saveButton) {
+            saveButton.disabled = false;
+            saveButton.textContent = '保存';
+          }
+        });
+      } else {
+        debugLog('错误: 找不到表单或保存按钮');
+      }
+    }
+
+    // 页面初始化函数
+    function initPage() {
+      debugLog('初始化页面');
+
+      // 检查认证
+      if (!checkAuth()) return;
+
+      // 初始化事件监听
+      initEventListeners();
+
+      // 加载URL数据
+      loadUrlData();
+
+      // 设置全局错误处理 (Optional: for catching unhandled errors)
+      window.addEventListener('error', function(event) {
+        console.error('全局错误:', event.error);
+        // Avoid showing generic error if a specific error is already displayed
+        // if (!isLoadingData && !document.getElementById('error-message').offsetParent && !document.getElementById('form-message').offsetParent) {
+        //   showListError('发生未处理的错误: ' + (event.error?.message || '未知错误'));
+        // }
+      });
+    }
+
+    // 启动初始化 on DOMContentLoaded
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', initPage);
+    } else {
+        initPage(); // DOM already loaded
+    }
+
+  </script>
+</body>
+</html>

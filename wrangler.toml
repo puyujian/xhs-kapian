@@ -3,9 +3,6 @@ main = "src/index.js"
 compatibility_date = "2023-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-[site]
-bucket = "./public"
-
 [vars]
 # 在环境变量中设置JWT密钥（应当使用随机生成的值）
 JWT_SECRET = "sgdsagdfagadfgdfagdd"
@@ -21,4 +18,8 @@ database_id = "2e8061aa-7da5-4d6d-b2ac-a7ffe2ee81e2" # Replace with your actual 
 [triggers]
 # "<cron string>" = [ "<schedule name>" ] (optional name)
 # Example: Run daily at 1:00 AM UTC
-crons = [ "0 1 * * *" ] 
+crons = [ "0 1 * * *" ]
+
+[[r2_buckets]]
+binding = "MY_R2_BUCKET" # 这个名称将用于在 Worker 代码中访问 R2
+bucket_name = "xhs"
