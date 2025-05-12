@@ -123,8 +123,28 @@ async function handleAdminApi(request, env, db, auth) {
       // 改进比较逻辑，先确保existing存在，再进行数字ID比较
       if (existing) {
         const existingId = parseInt(existing.id, 10);
-        // 只有当非当前项目的键相同时，才报错
-        if (existingId !== id) {
+        const currentId = parseInt(id, 10);
+        
+        console.log('ID比较详情:', {
+          existingId,
+          currentId,
+          existingIdType: typeof existingId,
+          currentIdType: typeof currentId,
+          isEqual: existingId === currentId
+        });
+        
+        // 增强比较逻辑，处理可能的NaN情况
+        if (isNaN(existingId) || isNaN(currentId)) {
+          console.log('警告: ID解析为NaN，进行字符串比较', {
+            existingIdStr: String(existing.id),
+            currentIdStr: String(id)
+          });
+          // 如果解析失败，回退到字符串比较
+          if (String(existing.id) !== String(id)) {
+            return jsonResponse({ error: '此键已被使用 (ID类型不匹配)' }, 409);
+          }
+        } else if (existingId !== currentId) {
+          // 数字比较 - 只有当非当前项目的键相同时，才报错
           return jsonResponse({ error: '此键已被使用' }, 409);
         }
       }
