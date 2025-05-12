@@ -101,14 +101,32 @@ async function handleAdminApi(request, env, db, auth) {
       const id = parseInt(path.split('/')[3], 10);
       const { key, url } = await request.json();
       
+      console.log('更新重定向请求', { id, key, url });
+      
       if (!key || !url) {
         return jsonResponse({ error: '键和URL都是必需的' }, 400);
       }
       
       // 检查键是否已存在且不是当前项
       const existing = await db.getRedirectByKey(key);
-      if (existing && parseInt(existing.id, 10) !== parseInt(id, 10)) { // 确保两边都转为数字再比较
-        return jsonResponse({ error: '此键已被使用' }, 409);
+      console.log('更新重定向 - 检查键是否存在:', { 
+        key, 
+        id, 
+        existingId: existing?.id, 
+        idType: typeof id, 
+        existingIdType: typeof existing?.id,
+        existingIdNum: parseInt(existing?.id, 10),
+        idNum: parseInt(id, 10),
+        isEqual: parseInt(existing?.id, 10) === parseInt(id, 10)
+      });
+      
+      // 改进比较逻辑，先确保existing存在，再进行数字ID比较
+      if (existing) {
+        const existingId = parseInt(existing.id, 10);
+        // 只有当非当前项目的键相同时，才报错
+        if (existingId !== id) {
+          return jsonResponse({ error: '此键已被使用' }, 409);
+        }
       }
       
       await db.updateRedirect(id, key, url);
@@ -1005,14 +1023,14 @@ function getUrlsPage() {
     function editRedirect(id) {
       debugLog('编辑重定向', { id });
       
-      const redirect = redirects.find(item => item.id === id);
+      const redirect = redirects.find(item => parseInt(item.id, 10) === id);
       if (!redirect) {
         debugLog('错误: 找不到ID为' + id + '的重定向');
         return;
       }
       
       // 填充表单
-      document.getElementById('url-id').value = redirect.id;
+      document.getElementById('url-id').value = id; // 使用数字ID
       document.getElementById('url-key').value = redirect.key;
       document.getElementById('url-target').value = redirect.url;
       
@@ -1099,7 +1117,9 @@ function getUrlsPage() {
     
     // 保存URL数据
     async function saveUrlData(id, key, url) {
-      debugLog('保存URL数据', { id, key, url });
+      // 确保ID是数字
+      const numericId = id ? parseInt(id, 10) : null;
+      debugLog('保存URL数据', { id, numericId, key, url });
       
       try {
         const token = localStorage.getItem('token');
@@ -1112,10 +1132,10 @@ function getUrlsPage() {
         let savePromise;
         
         // 更新或创建
-        if (id) {
+        if (numericId) {
           // 更新现有记录
           debugLog('发送更新请求');
-          savePromise = fetch('/admin/api/redirects/' + id, {
+          savePromise = fetch('/admin/api/redirects/' + numericId, {
             method: 'PUT',
             headers: {
               'Authorization': 'Bearer ' + token,
@@ -1244,9 +1264,13 @@ function getUrlsPage() {
             saveButton.textContent = '正在保存...';
           }
           
-          const id = document.getElementById('url-id').value;
+          const idValue = document.getElementById('url-id').value;
+          const id = idValue ? parseInt(idValue, 10) : '';
           const key = document.getElementById('url-key').value.trim();
           const url = document.getElementById('url-target').value.trim();
+          
+          // 对ID的值进行控制台输出
+          debugLog('表单数据', { idValue, id, key, url });
           
           if (!key || !url) {
             showMessage('键和URL不能为空', true);
