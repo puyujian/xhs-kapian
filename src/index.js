@@ -10,7 +10,8 @@ const app = {
     const url = new URL(request.url);
     const path = url.pathname;
     
-    // 处理 Cloudflare 特定路径
+    // 处理 Cloudflare 特定路径 (注释掉，让 Pages/Sites 平台处理)
+    /*
     if (path.startsWith('/cdn-cgi/')) {
       // 处理 Cloudflare 的预加载和 RUM 请求
       if (path.startsWith('/cdn-cgi/speculation') || path.startsWith('/cdn-cgi/rum')) {
@@ -23,6 +24,7 @@ const app = {
         });
       }
     }
+    */
     
     // 创建数据库实例
     const db = new Database(env.DB);
@@ -45,10 +47,38 @@ const app = {
         }
     }
 
-    // 处理静态资源
+    // 处理静态资源 (由 Cloudflare Pages/Sites 自动处理，但我们需要确保 Worker 不会拦截)
+    // 检查是否是明确指向 /admin/js/ 的静态资源请求
+    if (path.startsWith('/admin/js/')) {
+      // 让 Cloudflare Pages/Sites 处理静态资源
+      // 注意: env.ASSETS.fetch 仅在 Pages/Sites 环境中可用
+      if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
+        console.log(`将静态资源请求 ${path} 传递给 env.ASSETS.fetch`);
+        try {
+          // 尝试获取静态资源
+          const assetResponse = await env.ASSETS.fetch(request);
+          // 检查资源是否存在
+          if (assetResponse.status === 404) {
+             console.warn(`env.ASSETS.fetch 未找到资源: ${path}`);
+             // 如果平台找不到，我们也不应该继续处理，返回404
+             return new Response('Static asset not found by platform', { status: 404 });
+          }
+          // 返回平台找到的资源
+          return assetResponse;
+        } catch (e) {
+           console.error(`env.ASSETS.fetch 处理 ${path} 时出错:`, e);
+           return new Response('Error fetching static asset', { status: 500 });
+        }
+      } else {
+        // 如果 ASSETS 不可用（例如本地开发环境），返回 404
+        console.warn(`env.ASSETS.fetch 不可用，无法提供静态资源 ${path}`);
+        return new Response('Not Found (env.ASSETS unavailable)', { status: 404 });
+      }
+    }
+
+    // 首页处理 (保持不变)
     if ((path === '/' || path === '') && !url.searchParams.has('key')) {
-      // 首页
-      return new Response(
+       return new Response(
         `<!DOCTYPE html>
         <html>
         <head>
@@ -73,9 +103,24 @@ const app = {
       );
     }
     
-    // 处理管理面板请求
+    // 处理管理面板请求 (现在它会在静态资源检查之后)
     if (path.startsWith('/admin')) {
-      return handleAdmin(request, env, ctx, db, auth);
+       // 确保不处理 /admin/js/ 等已知静态路径 (虽然前面的检查应该已经处理了)
+       if (path.startsWith('/admin/js/')) {
+         console.warn(`请求 ${path} 意外到达 /admin 路由处理程序`);
+         // 理论上不应到达这里，但为了安全，尝试让 Pages 处理或返回 404
+         if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
+           try {
+             return await env.ASSETS.fetch(request);
+           } catch (e) {
+             console.error(`在 /admin 路由中尝试 env.ASSETS.fetch 处理 ${path} 时出错:`, e);
+             return new Response('Error fetching static asset in admin route', { status: 500 });
+           }
+         }
+         return new Response('Not Found (admin route conflict)', { status: 404 });
+       }
+       // 处理其他 /admin/* 路径
+       return handleAdmin(request, env, ctx, db, auth);
     }
     
     // 处理API请求
