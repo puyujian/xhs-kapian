@@ -107,7 +107,23 @@ async function handleAdminApi(request, env, db, auth) {
       
       // 检查键是否已存在且不是当前项
       const existing = await db.getRedirectByKey(key);
+
+      // --- DEBUG LOGGING START ---
+      console.log(`[DEBUG PUT /admin/api/redirects/:id] Path ID: ${id} (Type: ${typeof id})`);
+      console.log(`[DEBUG PUT /admin/api/redirects/:id] Request Key: ${key}`);
+      console.log(`[DEBUG PUT /admin/api/redirects/:id] Existing Record Found:`, existing);
+      if (existing) {
+        console.log(`[DEBUG PUT /admin/api/redirects/:id] Existing ID: ${existing.id} (Type: ${typeof existing.id})`);
+        const parsedExistingId = parseInt(existing.id, 10);
+        console.log(`[DEBUG PUT /admin/api/redirects/:id] Parsed Existing ID: ${parsedExistingId} (Type: ${typeof parsedExistingId})`);
+        console.log(`[DEBUG PUT /admin/api/redirects/:id] Comparison: parseInt(existing.id, 10) !== id  =>  ${parsedExistingId} !== ${id}  =>  ${parsedExistingId !== id}`);
+      } else {
+         console.log(`[DEBUG PUT /admin/api/redirects/:id] No existing record found for key: ${key}`);
+      }
+      // --- DEBUG LOGGING END ---
+
       if (existing && parseInt(existing.id, 10) !== id) { // 强制将 existing.id 转为数字再比较
+        console.log(`[DEBUG PUT /admin/api/redirects/:id] Conflict detected! Returning 409.`); // 添加日志确认冲突
         return jsonResponse({ error: '此键已被使用' }, 409);
       }
       
@@ -1003,18 +1019,33 @@ function getUrlsPage() {
 
     // 编辑重定向
     function editRedirect(id) {
-      debugLog('编辑重定向', { id });
+      debugLog('编辑重定向 - 传入 ID:', { id, type: typeof id }); // <-- 添加日志
+      if (redirects.length > 0) { // <-- 添加日志
+        debugLog('编辑重定向 - redirects[0].id:', { id: redirects[0].id, type: typeof redirects[0].id }); // <-- 添加日志
+      }
       
-      const redirect = redirects.find(item => item.id === id);
-      if (!redirect) {
-        debugLog('错误: 找不到ID为' + id + '的重定向');
+      const redirect = redirects.find(item => item.id === id); // 尝试严格比较
+      debugLog('编辑重定向 - find 结果 (严格比较):', redirect); // <-- 添加日志
+      
+      // 如果严格比较失败，尝试宽松比较 (==) 并记录
+      let foundRedirect = redirect;
+      if (!foundRedirect) {
+          foundRedirect = redirects.find(item => item.id == id); // 尝试宽松比较
+          debugLog('编辑重定向 - find 结果 (宽松比较):', foundRedirect); // <-- 添加日志
+      }
+
+      if (!foundRedirect) {
+        debugLog('错误: 找不到ID为' + id + '的重定向 (严格和宽松比较都失败)');
+        showMessage('无法编辑：找不到对应的URL记录。', true); // 提示用户
         return;
       }
       
       // 填充表单
-      document.getElementById('url-id').value = redirect.id;
-      document.getElementById('url-key').value = redirect.key;
-      document.getElementById('url-target').value = redirect.url;
+      debugLog('编辑重定向 - 准备填充表单，找到的 redirect.id:', { id: foundRedirect.id, type: typeof foundRedirect.id }); // <-- 添加日志
+      document.getElementById('url-id').value = foundRedirect.id; // 使用找到的记录填充
+      document.getElementById('url-key').value = foundRedirect.key;
+      document.getElementById('url-target').value = foundRedirect.url;
+      debugLog('编辑重定向 - 设置 url-id input value 为:', document.getElementById('url-id').value); // <-- 添加日志
       
       // 显示表单
       toggleForm(true, true);
@@ -1099,7 +1130,8 @@ function getUrlsPage() {
     
     // 保存URL数据
     async function saveUrlData(id, key, url) {
-      debugLog('保存URL数据', { id, key, url });
+      // 添加日志: 检查传入的 id 类型和值
+      debugLog('保存URL数据 - 接收到的 id:', { id, type: typeof id });
       
       try {
         const token = localStorage.getItem('token');
@@ -1112,9 +1144,10 @@ function getUrlsPage() {
         let savePromise;
         
         // 更新或创建
-        if (id) {
+        // 添加日志: 检查是更新还是创建
+        if (id && id !== 'undefined' && id !== '') { // 更严格地检查 id 是否有效
           // 更新现有记录
-          debugLog('发送更新请求');
+          debugLog('保存URL数据 - 判定为更新 (PUT)，ID:', id); // <-- 添加日志
           savePromise = fetch('/admin/api/redirects/' + id, {
             method: 'PUT',
             headers: {
@@ -1125,7 +1158,7 @@ function getUrlsPage() {
           });
         } else {
           // 创建新记录
-          debugLog('发送创建请求');
+          debugLog('保存URL数据 - 判定为创建 (POST)，因为 id 无效:', { id, type: typeof id }); // <-- 添加日志
           savePromise = fetch('/admin/api/redirects', {
             method: 'POST',
             headers: {
