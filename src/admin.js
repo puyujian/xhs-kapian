@@ -888,7 +888,7 @@ function getUrlsPage() {
 
         // 添加超时处理
         const timeout = (ms, promise, name) => new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error(`请求 ${name} 超时 (${ms}ms)`)), ms);
+          const timer = setTimeout(() => reject(new Error('请求 ' + name + ' 超时 (' + ms + 'ms)')), ms);
           promise.then(
             value => { clearTimeout(timer); resolve(value); },
             error => { clearTimeout(timer); reject(error); }
@@ -904,7 +904,7 @@ function getUrlsPage() {
         if (!redirectsResponse.ok) {
           if (redirectsResponse.status === 401) throw new Error('认证失败');
           const errorText = await redirectsResponse.text();
-          throw new Error(`获取重定向列表失败: ${redirectsResponse.status} - ${errorText}`);
+          throw new Error('获取重定向列表失败: ' + redirectsResponse.status + ' - ' + errorText);
         }
         const redirectsData = await redirectsResponse.json();
         redirects = redirectsData.redirects?.results || redirectsData.redirects || [];
@@ -1087,7 +1087,7 @@ function getUrlsPage() {
          const numericId = parseInt(id, 10);
          if (!isNaN(numericId)) {
            // 添加确认对话框
-           if (confirm(`确定要删除短链接 "${key}" (ID: ${numericId}) 吗？\n所有相关的访问记录也将被永久删除。`)) {
+           if (confirm('确定要删除短链接 "' + key + '" (ID: ' + numericId + ') 吗？\n所有相关的访问记录也将被永久删除。')) {
              deleteRedirect(numericId);
            } else {
              debugLog('用户取消删除');
@@ -1122,7 +1122,7 @@ function getUrlsPage() {
         if (!response.ok) {
           if (response.status === 401) throw new Error('认证失败');
           const error = await response.json().catch(() => ({ error: '删除失败，请重试' }));
-          throw new Error(error.error || `删除失败: ${response.status}`);
+          throw new Error(error.error || '删除失败: ' + response.status);
         }
 
         // 重新加载数据
@@ -1177,7 +1177,7 @@ function getUrlsPage() {
         const apiUrl = isUpdate ? '/admin/api/redirects/' + id : '/admin/api/redirects';
         const method = isUpdate ? 'PUT' : 'POST';
 
-        debugLog(`保存URL数据 - 判定为 ${method}，URL: ${apiUrl}`, { id, key, url });
+        debugLog('保存URL数据 - 判定为 ' + method + '，URL: ' + apiUrl, { id, key, url });
 
         savePromise = fetch(apiUrl, {
           method: method,
@@ -1196,14 +1196,14 @@ function getUrlsPage() {
            debugLog('解析响应JSON失败', { status: response.status, error: err });
            // 如果JSON解析失败，但状态码是成功的范围，可能是一个空响应体
            if (response.ok) return { success: true, message: isUpdate ? 'URL已成功更新' : 'URL已成功添加' };
-           throw new Error(`请求失败: ${response.status} ${response.statusText}`);
+           throw new Error('请求失败: ' + response.status + ' ' + response.statusText);
         });
 
         debugLog('保存请求响应', responseData);
 
         if (!response.ok) {
           debugLog('保存请求失败', { status: response.status, body: responseData });
-          const errorMessage = responseData.error || `保存失败: ${response.status}`;
+          const errorMessage = responseData.error || '保存失败: ' + response.status;
           if (response.status === 401) throw new Error('认证失败');
           if (response.status === 409) throw new Error('此键已被使用'); // 特殊处理冲突错误
           throw new Error(errorMessage);
@@ -1381,7 +1381,7 @@ function getUrlsPage() {
     // 超时函数定义
     function timeout(ms, promise, name) {
       return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`请求 ${name} 超时 (${ms}ms)`)), ms);
+        const timer = setTimeout(() => reject(new Error('请求 ' + name + ' 超时 (' + ms + 'ms)')), ms);
         promise.then(
           value => { clearTimeout(timer); resolve(value); },
           error => { clearTimeout(timer); reject(error); }
@@ -1559,7 +1559,7 @@ function getStatsPage() {
               // setTimeout(() => { window.location.reload(); }, 5000); // 可选：自动刷新
 
             } else {
-              throw new Error(result.error || `聚合失败: ${response.status}`);
+              throw new Error(result.error || '聚合失败: ' + response.status);
             }
           } catch (error) {
             statusElement.textContent = '处理请求时出错: ' + error.message;
@@ -1589,7 +1589,7 @@ function getStatsPage() {
         const year = yesterday.getFullYear();
         const month = String(yesterday.getMonth() + 1).padStart(2, '0');
         const day = String(yesterday.getDate()).padStart(2, '0');
-        dateInput.value = `${year}-${month}-${day}`;
+        dateInput.value = year + '-' + month + '-' + day;
       }
     });
     </script>
