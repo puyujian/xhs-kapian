@@ -7,25 +7,25 @@ async function handleAdmin(request, env, ctx, db, auth) {
   if (pathname === '/admin' || pathname === '/admin/') {
     return serveAdminPage('index');
   }
-
+  
   // 管理页面路由
   if (pathname === '/admin/login') {
     return serveAdminPage('login');
   }
-
+  
   if (pathname === '/admin/urls') {
     return serveAdminPage('urls');
   }
-
+  
   if (pathname === '/admin/stats') {
     return serveAdminPage('stats');
   }
-
+  
   // 管理API端点
   if (pathname.startsWith('/admin/api/')) {
     return await handleAdminApi(request, env, db, auth);
   }
-
+  
   // 404 Not Found
   return new Response('Not Found', { status: 404 });
 }
@@ -40,30 +40,30 @@ async function handleAdminApi(request, env, db, auth) {
   if (path === '/admin/api/login' && request.method === 'POST') {
     try {
       const { username, password } = await request.json();
-
+      
       if (!username || !password) {
         return jsonResponse({ error: '用户名和密码不能为空' }, 400);
       }
-
+      
       const token = await auth.login(username, password, env);
-
+      
       if (token) {
         return jsonResponse({ token, username });
       }
-
+      
       return jsonResponse({ error: '用户名或密码错误' }, 401);
     } catch (e) {
       return jsonResponse({ error: '无效的请求' }, 400);
     }
   }
-
+  
   // 需要身份验证的API
   const user = auth.requireAuth(request);
   if (!user) {
     return jsonResponse({ error: '未授权' }, 401);
   }
-
-  // --- 重定向管理 API ---
+  
+  // --- 重定向管理 API (不变) ---
   // 获取所有重定向
   if (path === '/admin/api/redirects' && request.method === 'GET') {
      const redirects = await db.getAllRedirects();
@@ -77,93 +77,52 @@ async function handleAdminApi(request, env, db, auth) {
   if (path === '/admin/api/redirects' && request.method === 'POST') {
     try {
       const { key, url } = await request.json();
-
+      
       if (!key || !url) {
         return jsonResponse({ error: '键和URL都是必需的' }, 400);
       }
-
+      
       // 检查键是否已存在
       const existing = await db.getRedirectByKey(key);
       if (existing) {
         return jsonResponse({ error: '此键已被使用' }, 409);
       }
-
+      
       const result = await db.addRedirect(key, url);
-      // 假设 addRedirect 返回类似 { success: true, meta: { ... }, id: newId } 的结构
-      // 或者需要调整以获取新ID
-      // 暂时假设 result 包含 id
-      return jsonResponse({ success: true, id: result?.id || result?.meta?.last_row_id });
+      return jsonResponse({ success: true, id: result.id });
     } catch (e) {
       console.error('创建重定向错误:', e);
       return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
   // 更新重定向
-  const updateMatch = path.match(/^\/admin\/api\/redirects\/([^/]+)$/);
-  if (updateMatch && request.method === 'PUT') {
+  if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'PUT') {
     try {
-      const id = decodeURIComponent(updateMatch[1]); // 从匹配结果获取ID，并解码
+      const id = parseInt(path.split('/')[3], 10);
       const { key, url } = await request.json();
-
+      
       if (!key || !url) {
         return jsonResponse({ error: '键和URL都是必需的' }, 400);
       }
-
+      
       // 检查键是否已存在且不是当前项
       const existing = await db.getRedirectByKey(key);
-
-      // --- DEBUG LOGGING START ---
-      console.log(`[DEBUG PUT /admin/api/redirects/:id] Path ID: ${id} (Type: ${typeof id})`);
-      console.log(`[DEBUG PUT /admin/api/redirects/:id] Request Key: ${key}`);
-      console.log(`[DEBUG PUT /admin/api/redirects/:id] Existing Record Found:`, existing);
-      if (existing) {
-        console.log(`[DEBUG PUT /admin/api/redirects/:id] Existing ID: ${existing.id} (Type: ${typeof existing.id})`);
-        // 不再需要解析为数字
-        console.log(`[DEBUG PUT /admin/api/redirects/:id] Comparison: existing.id !== id  =>  ${existing.id} !== ${id}  =>  ${existing.id !== id}`);
-      } else {
-         console.log(`[DEBUG PUT /admin/api/redirects/:id] No existing record found for key: ${key}`);
+      if (existing && parseInt(existing.id, 10) !== id) { // 强制将 existing.id 转为数字再比较
+        return jsonResponse({ error: '此键已被使用' }, 409);
       }
-      // --- DEBUG LOGGING END ---
-
-      // 直接比较字符串ID
-      if (existing && existing.id !== id) {
-          console.log(`[DEBUG PUT /admin/api/redirects/:id] Conflict detected! Key '${key}' is used by ID ${existing.id}, current ID is ${id}. Returning 409.`);
-          return jsonResponse({ error: '此键已被使用' }, 409);
-      }
-      // 如果 existing 不存在，或者 existing.id === id，则继续执行更新
-
-      // ID 现在是字符串，不需要 isNaN 检查
-
-      const updateResult = await db.updateRedirect(id, key, url); // 传递原始字符串ID
-      // 详细记录更新操作的结果，便于调试
-      console.log(`[DEBUG PUT /admin/api/redirects/:id] Update Result for ID "${id}" (Key: ${key}, URL: ${url}):`, JSON.stringify(updateResult, null, 2));
-
-      // 检查 D1 返回结果中是否有更改记录 (meta.changes)
-      if (updateResult?.meta?.changes > 0) {
-        return jsonResponse({ success: true, message: '重定向已成功更新' });
-      } else if (updateResult?.success === true && updateResult?.meta?.changes === 0) {
-        // SQL 执行成功，但没有行被更新，可能是 ID 不存在或数据未更改
-        console.warn(`[WARN PUT /admin/api/redirects/:id] Update command executed for ID "${id}", but no rows were changed. ID might not exist or data unchanged.`);
-        // 即使数据未更改，也视为成功，因为请求本身是有效的
-        return jsonResponse({ success: true, message: '数据未更改或记录未找到' }); // 返回成功，但提示信息不同
-      } else {
-        // 其他失败情况
-        console.error(`[ERROR PUT /admin/api/redirects/:id] Update failed for ID "${id}". DB response:`, updateResult);
-        return jsonResponse({ success: false, error: '更新操作失败，请检查日志' }, 500);
-      }
+      
+      await db.updateRedirect(id, key, url);
+      return jsonResponse({ success: true });
     } catch (e) {
       console.error('更新重定向错误:', e);
       return jsonResponse({ error: '无效的请求: ' + e.message }, 400);
     }
   }
   // 删除重定向
-  const deleteMatch = path.match(/^\/admin\/api\/redirects\/([^/]+)$/);
-  if (deleteMatch && request.method === 'DELETE') {
+  if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'DELETE') {
     try {
-      const id = decodeURIComponent(deleteMatch[1]); // 从匹配结果获取ID，并解码
-      // ID 现在是字符串，不需要 isNaN 检查
-      await db.deleteRedirect(id); // 传递原始字符串ID
-      // TODO: 检查 deleteRedirect 的结果确认是否真的删除了
+      const id = parseInt(path.split('/')[3], 10);
+      await db.deleteRedirect(id);
       return jsonResponse({ success: true });
     } catch (e) {
       console.error('删除重定向错误:', e);
@@ -171,11 +130,9 @@ async function handleAdminApi(request, env, db, auth) {
     }
   }
   // 获取特定重定向的详细访问数据 (保留，可能用于查看原始日志)
-  const visitsMatch = path.match(/^\/admin\/api\/redirects\/([^/]+)\/visits$/);
-  if (visitsMatch && request.method === 'GET') {
-    const id = decodeURIComponent(visitsMatch[1]); // 从匹配结果获取ID，并解码
-    // ID 现在是字符串，不需要 isNaN 检查
-    const visits = await db.getRedirectVisits(id); // 传递原始字符串ID
+  if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
+    const id = parseInt(path.split('/')[3], 10);
+    const visits = await db.getRedirectVisits(id);
     return jsonResponse({ visits: visits?.results || [] }); // 确保返回数组
   }
 
@@ -194,7 +151,7 @@ async function handleAdminApi(request, env, db, auth) {
     const timeseries = await db.getTimeSeriesStats(days);
     return jsonResponse({ timeseries });
   }
-
+  
   // 获取 Top URLs (替代原 /admin/api/stats)
   if (path === '/admin/api/stats/top-urls' && request.method === 'GET') {
     const limit = parseInt(params.get('limit') || '10', 10); // 默认 Top 10
@@ -232,7 +189,7 @@ async function handleAdminApi(request, env, db, auth) {
     try {
       const requestData = await request.json();
       const dateStr = requestData.date; // 指定日期，格式：YYYY-MM-DD
-
+      
       // 验证日期格式
       if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
         return jsonResponse({
@@ -240,16 +197,16 @@ async function handleAdminApi(request, env, db, auth) {
           error: '无效的日期格式，请使用YYYY-MM-DD格式'
         }, 400);
       }
-
+      
       console.log(`管理员 ${user.username} 手动触发聚合，日期: ${dateStr}`);
-
+      
       // 执行聚合
       const result = await db.aggregateDailyVisits(dateStr);
-
-      return jsonResponse({
-        success: true,
+      
+      return jsonResponse({ 
+        success: true, 
         result,
-        message: result.success ? '数据聚合成功' : '数据聚合失败'
+        message: result.success ? '数据聚合成功' : '数据聚合失败' 
       });
     } catch (error) {
       console.error('手动触发聚合出错:', error);
@@ -267,7 +224,7 @@ async function handleAdminApi(request, env, db, auth) {
 // 提供管理页面
 function serveAdminPage(page) {
   let content = '';
-
+  
   // 根据页面提供相应的HTML
   switch (page) {
     case 'login':
@@ -285,7 +242,7 @@ function serveAdminPage(page) {
     default:
       return new Response('Not Found', { status: 404 });
   }
-
+  
   return new Response(content, {
     headers: {
       'Content-Type': 'text/html;charset=UTF-8',
@@ -369,7 +326,7 @@ function getBasePage(title, content, scripts = '') {
       margin-bottom: 5px;
       font-weight: 500;
     }
-    input[type="text"],
+    input[type="text"], 
     input[type="password"],
     input[type="url"] {
       width: 100%;
@@ -437,7 +394,7 @@ function getBasePage(title, content, scripts = '') {
       <a href="#" id="logout" style="margin-left: auto;">退出登录</a>
     </div>
   </header>
-
+  
   <div class="main-content">
     ${content}
   </div>
@@ -450,7 +407,7 @@ function getBasePage(title, content, scripts = '') {
         window.location.href = '/admin/login';
       }
     }
-
+    
     // 退出登录
     document.getElementById('logout')?.addEventListener('click', function(e) {
       e.preventDefault();
@@ -458,10 +415,10 @@ function getBasePage(title, content, scripts = '') {
       localStorage.removeItem('username');
       window.location.href = '/admin/login';
     });
-
+    
     // 检查认证状态
     checkAuth();
-
+    
     ${scripts}
   </script>
 </body>
@@ -511,7 +468,7 @@ function getLoginPage() {
       margin-bottom: 8px;
       font-weight: 500;
     }
-    input[type="text"],
+    input[type="text"], 
     input[type="password"] {
       width: 100%;
       padding: 12px;
@@ -577,14 +534,14 @@ function getLoginPage() {
 
     document.getElementById('login-form').addEventListener('submit', async function(e) {
       e.preventDefault();
-
+      
       const username = document.getElementById('username').value;
       const password = document.getElementById('password').value;
       const errorElement = document.getElementById('error-message');
-
+      
       // 清空错误信息
       errorElement.textContent = '';
-
+      
       try {
         const response = await fetch('/admin/api/login', {
           method: 'POST',
@@ -593,14 +550,14 @@ function getLoginPage() {
           },
           body: JSON.stringify({ username, password }),
         });
-
+        
         const data = await response.json();
-
+        
         if (response.ok) {
           // 登录成功，保存令牌
           localStorage.setItem('token', data.token);
           localStorage.setItem('username', data.username);
-
+          
           // 跳转到管理面板
           window.location.href = '/admin/';
         } else {
@@ -622,21 +579,21 @@ function getAdminIndexPage() {
   const content = `
     <h2>欢迎使用URL重定向系统</h2>
     <p>请从上方导航选择所需功能:</p>
-
+    
     <div style="display: flex; flex-wrap: wrap; gap: 20px; margin-top: 30px;">
       <div style="flex: 1; min-width: 250px; background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
         <h3 style="margin-top: 0; color: #3498db;">URL管理</h3>
         <p>添加、编辑或删除重定向链接。</p>
         <a href="/admin/urls" style="display: inline-block; margin-top: 10px; text-decoration: none; color: #3498db;">前往 URL 管理 &rarr;</a>
       </div>
-
+      
       <div style="flex: 1; min-width: 250px; background-color: #f8f9fa; padding: 20px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,0.05);">
         <h3 style="margin-top: 0; color: #3498db;">访问统计</h3>
         <p>查看访问数据和统计信息。</p>
         <a href="/admin/stats" style="display: inline-block; margin-top: 10px; text-decoration: none; color: #3498db;">查看统计数据 &rarr;</a>
       </div>
     </div>
-
+    
     <div id="system-info" style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
       <h3 style="margin-top: 0;">系统信息</h3>
       <p id="redirect-count">正在加载重定向数量...</p>
@@ -644,11 +601,11 @@ function getAdminIndexPage() {
       <p id="admin-info">当前登录用户: <span id="username">加载中...</span></p>
     </div>
   `;
-
+  
   const scripts = `
     // 显示登录用户名
     document.getElementById('username').textContent = localStorage.getItem('username') || '未知';
-
+    
     // 获取系统数据
     async function fetchSystemData() {
       try {
@@ -657,50 +614,49 @@ function getAdminIndexPage() {
         if (!token) {
           return;
         }
-
+        
         // 获取所有重定向
         const redirectsResponse = await fetch('/admin/api/redirects', {
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
-
+        
         if (redirectsResponse.ok) {
           const redirectsData = await redirectsResponse.json();
-          // 确保从正确的属性获取数据
-          const redirectsList = redirectsData.redirects?.results || redirectsData.redirects || [];
-          document.getElementById('redirect-count').textContent =
-            '系统中共有 ' + redirectsList.length + ' 个重定向链接';
-        } else {
-           document.getElementById('redirect-count').textContent = '加载重定向数量失败';
+          redirects = redirectsData.redirects.results || [];
+          document.getElementById('redirect-count').textContent = 
+            '系统中共有 ' + redirects.length + ' 个重定向链接';
         }
-
-        // 获取访问统计摘要
-        const statsResponse = await fetch('/admin/api/stats/summary?days=30', { // 获取最近30天摘要
+        
+        // 获取访问统计
+        const statsResponse = await fetch('/admin/api/stats', {
           headers: {
             'Authorization': 'Bearer ' + token
           }
         });
-
+        
         if (statsResponse.ok) {
           const statsData = await statsResponse.json();
-          const totalVisits = statsData.summary?.totalVisits || 0;
-          document.getElementById('visit-count').textContent =
-            '最近30天总访问量: ' + totalVisits + ' 次';
-        } else {
-           document.getElementById('visit-count').textContent = '加载访问统计失败';
+          let totalVisits = 0;
+          
+          if (statsData.stats && statsData.stats.length > 0) {
+            // 计算总访问量
+            totalVisits = statsData.stats.reduce((sum, item) => sum + (item.visit_count || 0), 0);
+          }
+          
+          document.getElementById('visit-count').textContent = 
+            '总访问量: ' + totalVisits + ' 次';
         }
       } catch (error) {
         console.error('获取系统数据出错:', error);
-         document.getElementById('redirect-count').textContent = '加载重定向数量出错';
-         document.getElementById('visit-count').textContent = '加载访问统计出错';
       }
     }
-
+    
     // 加载系统数据
     fetchSystemData();
   `;
-
+  
   return getBasePage('管理面板', content, scripts);
 }
 
@@ -711,7 +667,7 @@ function getUrlsPage() {
       <h2 style="margin: 0;">URL管理</h2>
       <button id="add-url-btn">添加新URL</button>
     </div>
-
+    
     <div id="url-form-container" style="display: none; background-color: #f8f9fa; padding: 20px; margin-bottom: 20px; border-radius: 5px;">
       <h3 id="form-title">添加新URL</h3>
       <form id="url-form">
@@ -733,7 +689,7 @@ function getUrlsPage() {
         <div id="form-message" style="margin-top: 10px;"></div>
       </form>
     </div>
-
+    
     <div id="urls-table-container">
       <div id="loading-message">正在加载URL数据...</div>
       <div id="error-message" style="display: none; color: red; margin-bottom: 15px;"></div>
@@ -743,7 +699,7 @@ function getUrlsPage() {
             <th>短链接</th>
             <th>目标URL</th>
             <th>创建时间</th>
-            <th>访问次数 (总)</th>
+            <th>访问次数</th>
             <th>操作</th>
           </tr>
         </thead>
@@ -757,19 +713,19 @@ function getUrlsPage() {
       <button id="retry-load-btn" style="display: none; margin-top: 10px;">重试加载</button>
     </div>
   `;
-
+  
   const scripts = `
     // 全局变量定义
     let redirects = [];
-    let statsMap = new Map(); // 使用 Map 存储统计数据，key 为 redirect_id
+    let stats = {};
     let isLoadingData = false;
     let apiTimeout = 15000; // 15秒API超时
-
+    
     // 调试工具
     function debugLog(message, data) {
       console.log('[URL管理]', message, data || '');
     }
-
+    
     // 检查用户认证状态
     function checkAuth() {
       const token = localStorage.getItem('token');
@@ -780,20 +736,14 @@ function getUrlsPage() {
       }
       return true;
     }
-
+    
     // 工具函数：格式化日期
     function formatDate(dateString) {
       if (!dateString) return '';
-      try {
-        // 尝试更健壮的日期解析
-        const date = new Date(dateString.replace(' ', 'T') + 'Z'); // 假设是UTC时间
-        if (isNaN(date)) return dateString; // 解析失败返回原始字符串
-        return date.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai' }); // 指定时区
-      } catch (e) {
-        return dateString; // 解析异常返回原始字符串
-      }
+      const date = new Date(dateString);
+      return date.toLocaleString('zh-CN');
     }
-
+    
     // 显示/隐藏表单
     function toggleForm(show, isEdit = false) {
       debugLog('切换表单显示', { show, isEdit });
@@ -802,9 +752,9 @@ function getUrlsPage() {
         debugLog('错误: 找不到表单容器元素');
         return;
       }
-
+      
       container.style.display = show ? 'block' : 'none';
-
+      
       if (show) {
         document.getElementById('form-title').textContent = isEdit ? '编辑URL' : '添加新URL';
         if (!isEdit) {
@@ -819,7 +769,7 @@ function getUrlsPage() {
         document.getElementById('form-message').textContent = '';
       }
     }
-
+    
     // 显示错误消息
     function showError(message) {
       const errorElement = document.getElementById('error-message');
@@ -832,12 +782,12 @@ function getUrlsPage() {
         errorElement.style.border = '1px solid #f5c6cb';
         errorElement.style.borderRadius = '4px';
       }
-
+      
       const loadingElement = document.getElementById('loading-message');
       if (loadingElement) {
         loadingElement.style.display = 'none';
       }
-
+      
       const retryButton = document.getElementById('retry-load-btn');
       if (retryButton) {
         retryButton.style.display = 'block';
@@ -845,100 +795,83 @@ function getUrlsPage() {
         retryButton.style.marginTop = '15px';
         retryButton.style.padding = '8px 15px';
       }
-
+      
       // 控制台输出错误
       console.error('URL管理错误:', message);
     }
-
-    // 加载URL数据和统计数据
+    
+    // 加载URL数据
     async function loadUrlData() {
-      debugLog('开始加载URL数据和统计');
-
+      debugLog('开始加载URL数据');
+      
       if (isLoadingData) {
         debugLog('已有加载请求正在进行中，跳过');
         return;
       }
-
+      
       if (!checkAuth()) return;
-
+      
       isLoadingData = true;
-
+      
       try {
         const token = localStorage.getItem('token');
-
+        
         // 隐藏错误消息，显示加载消息
         const errorElement = document.getElementById('error-message');
         if (errorElement) errorElement.style.display = 'none';
-
+        
         const loadingElement = document.getElementById('loading-message');
         if (loadingElement) loadingElement.style.display = 'block';
-
+        
         const retryButton = document.getElementById('retry-load-btn');
         if (retryButton) retryButton.style.display = 'none';
-
-        // 并行获取重定向列表和Top URLs统计数据
-        debugLog('并行发送获取重定向和Top URLs统计请求');
+        
+        // 获取所有重定向，添加超时处理
+        debugLog('发送获取重定向请求');
         const redirectsPromise = fetch('/admin/api/redirects', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-        // 获取所有时间的Top URLs统计，以便显示总访问次数
-        const statsPromise = fetch('/admin/api/stats/top-urls?limit=1000&days=9999', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-
-        // 添加超时处理
-        const timeout = (ms, promise, name) => new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('请求 ' + name + ' 超时 (' + ms + 'ms)')), ms);
-          promise.then(
-            value => { clearTimeout(timer); resolve(value); },
-            error => { clearTimeout(timer); reject(error); }
-          );
-        });
-
-        const [redirectsResponse, statsResponse] = await Promise.all([
-          timeout(apiTimeout, redirectsPromise, 'redirects'),
-          timeout(apiTimeout, statsPromise, 'stats')
-        ]);
-
-        // 处理重定向列表响应
-        if (!redirectsResponse.ok) {
-          if (redirectsResponse.status === 401) throw new Error('认证失败');
-          const errorText = await redirectsResponse.text();
-          throw new Error('获取重定向列表失败: ' + redirectsResponse.status + ' - ' + errorText);
-        }
-        const redirectsData = await redirectsResponse.json();
-        redirects = redirectsData.redirects?.results || redirectsData.redirects || [];
-        debugLog('成功获取重定向数据', redirects);
-
-        // 处理统计数据响应
-        if (!statsResponse.ok) {
-          // 统计数据获取失败不阻塞页面渲染，但记录错误
-          console.error('获取Top URLs统计失败:', statsResponse.status);
-          statsMap.clear(); // 清空旧数据
-        } else {
-          const statsData = await statsResponse.json();
-          statsMap.clear(); // 清空旧数据
-          if (statsData.topUrls && Array.isArray(statsData.topUrls)) {
-             statsData.topUrls.forEach(stat => {
-               statsMap.set(stat.redirect_id, stat.total_visits);
-             });
+          headers: {
+            'Authorization': 'Bearer ' + token
           }
-          debugLog('成功获取并处理Top URLs统计数据', statsMap);
+        });
+        
+        // 添加超时处理
+        const redirectsTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('获取重定向数据超时')), apiTimeout)
+        );
+        
+        const redirectsResponse = await Promise.race([redirectsPromise, redirectsTimeout]);
+        
+        if (!redirectsResponse.ok) {
+          // 检查是否是认证问题
+          if (redirectsResponse.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return;
+          }
+          
+          const errorText = await redirectsResponse.text();
+          debugLog('API响应错误', { status: redirectsResponse.status, body: errorText });
+          throw new Error('API响应错误: ' + redirectsResponse.status + ' - ' + errorText);
         }
-
+        
+        const redirectsData = await redirectsResponse.json();
+        // 修改点：确保 redirects 总是数组，并从正确的位置获取数据
+        redirects = redirectsData.redirects.results || []; 
+        debugLog('成功获取重定向数据', redirects);
+        
+        // 获取统计数据（如果需要的话，可以并行或串行获取）
+        // debugLog('发送获取统计数据请求');
+        // const statsPromise = fetch('/admin/api/stats', { ... });
+        // ... 处理 stats ...
+        
         // 渲染表格
         renderTable();
-
+        
       } catch (error) {
         debugLog('加载URL数据时出错', error);
-        if (error.message === '认证失败') {
-           debugLog('认证失败，重定向到登录页面');
-           localStorage.removeItem('token');
-           localStorage.removeItem('username');
-           window.location.href = '/admin/login';
-        } else {
-           showError('加载URL数据失败: ' + error.message);
-        }
+        showError('加载URL数据失败: ' + error.message);
       } finally {
         isLoadingData = false;
         const loadingElement = document.getElementById('loading-message');
@@ -946,7 +879,7 @@ function getUrlsPage() {
         debugLog('URL数据加载完成');
       }
     }
-
+    
     // 渲染表格
     function renderTable() {
       debugLog('开始渲染表格', { redirectsCount: redirects.length });
@@ -954,56 +887,58 @@ function getUrlsPage() {
       const table = document.getElementById('urls-table');
       const noUrlsMessage = document.getElementById('no-urls-message');
       const errorMessage = document.getElementById('error-message');
-
+      
       if (!tableBody || !table || !noUrlsMessage || !errorMessage) {
          debugLog('错误: 渲染表格所需的元素未找到');
          showError('无法渲染表格，页面结构可能已损坏。');
          return;
       }
-
+      
       // 清空现有表格内容
-      tableBody.innerHTML = '';
+      tableBody.innerHTML = ''; 
       errorMessage.style.display = 'none'; // 隐藏之前的错误
-
+      
       if (redirects.length === 0) {
         debugLog('没有重定向数据，显示空消息');
         table.style.display = 'none';
         noUrlsMessage.style.display = 'block';
         return;
       }
-
+      
       // 显示表格，隐藏空消息
       table.style.display = 'table'; // 使用'table'确保正确显示
       noUrlsMessage.style.display = 'none';
-
+      
       redirects.forEach(item => {
         const row = tableBody.insertRow();
-
+        
         // 添加调试信息
-        debugLog('渲染行', item);
-
+        debugLog('渲染行', item); 
+        
         // 短链接键
         const keyCell = row.insertCell();
         keyCell.textContent = item.key;
-
+        
         // 目标URL
         const urlCell = row.insertCell();
         // 为了防止非常长的URL破坏布局，可以考虑截断或添加title属性
         urlCell.textContent = item.url.length > 60 ? item.url.substring(0, 57) + '...' : item.url;
         urlCell.title = item.url; // 鼠标悬停时显示完整URL
-
+        
         // 创建时间
         const createdCell = row.insertCell();
-        createdCell.textContent = formatDate(item.created_at); // 使用格式化函数
+        // 修改点：直接使用API返回的格式化时间字符串
+        createdCell.textContent = item.created_at; 
+        // 如果需要客户端格式化：formatDate(item.created_at); 但API已提供格式化好的
 
-        // 访问次数 (从 statsMap 获取)
+        // 访问次数 - 注意：当前API不直接返回此数据，留空或显示0
         const visitsCell = row.insertCell();
-        visitsCell.textContent = statsMap.get(item.id) || 0; // 从Map获取，默认为0
-
+        visitsCell.textContent = stats[item.id]?.visit_count || 0; // 尝试从 stats 获取，默认为0
+        
         // 操作按钮
         const actionsCell = row.insertCell();
         actionsCell.style.whiteSpace = 'nowrap'; // 防止按钮换行
-
+        
         const editButton = document.createElement('button');
         editButton.textContent = '编辑';
         editButton.classList.add('edit-btn'); // 添加类以便样式化
@@ -1011,20 +946,37 @@ function getUrlsPage() {
         editButton.dataset.id = item.id;
         editButton.addEventListener('click', handleEditClick);
         actionsCell.appendChild(editButton);
-
+        
         const deleteButton = document.createElement('button');
         deleteButton.textContent = '删除';
         deleteButton.classList.add('delete-btn'); // 添加类以便样式化
-        deleteButton.style.backgroundColor = '#e74c3c'; // 红色背景
         deleteButton.dataset.id = item.id;
-        deleteButton.dataset.key = item.key; // 保留key用于确认信息
-        deleteButton.addEventListener('click', handleDeleteClick); // 使用新的处理函数
+        deleteButton.dataset.key = item.key;
+        deleteButton.addEventListener('click', (event) => {
+          const button = event.target;
+          const id = button.dataset.id;
+          if (id) {
+            // 确认 id 是有效的数字才调用 deleteRedirect
+            const numericId = parseInt(id, 10);
+            if (!isNaN(numericId)) {
+               // 调用异步删除函数，但注意 addEventListener 的回调通常不是 async
+               // 因此我们不需要 await，让 deleteRedirect 在后台执行
+               deleteRedirect(numericId); 
+            } else {
+               console.error('无效的删除 ID:', id);
+               showMessage('无法删除：无效的 ID', true); // 假设 showMessage 函数可用
+            }
+          } else {
+             console.error('未在删除按钮上找到 ID');
+             showMessage('无法删除：缺少 ID', true); // 假设 showMessage 函数可用
+          }
+        });
         actionsCell.appendChild(deleteButton);
       });
-
+      
       debugLog('表格渲染完成');
     }
-
+    
     // 处理编辑按钮点击事件
     function handleEditClick(event) {
       const button = event.target;
@@ -1051,96 +1003,80 @@ function getUrlsPage() {
 
     // 编辑重定向
     function editRedirect(id) {
-      debugLog('编辑重定向 - 传入 ID:', { id, type: typeof id });
-
-      // 确保使用数字ID进行查找
-      const redirect = redirects.find(item => parseInt(item.id, 10) === id);
-      debugLog('编辑重定向 - find 结果:', redirect);
-
+      debugLog('编辑重定向', { id });
+      
+      const redirect = redirects.find(item => item.id === id);
       if (!redirect) {
         debugLog('错误: 找不到ID为' + id + '的重定向');
-        showMessage('无法编辑：找不到对应的URL记录。', true); // 提示用户
         return;
       }
-
+      
       // 填充表单
-      debugLog('编辑重定向 - 准备填充表单，找到的 redirect.id:', { id: redirect.id, type: typeof redirect.id });
-      document.getElementById('url-id').value = redirect.id; // 使用找到的记录填充
+      document.getElementById('url-id').value = redirect.id;
       document.getElementById('url-key').value = redirect.key;
       document.getElementById('url-target').value = redirect.url;
-      debugLog('编辑重定向 - 设置 url-id input value 为:', document.getElementById('url-id').value);
-
+      
       // 显示表单
       toggleForm(true, true);
-
+      
       // 确保滚动到表单位置
       document.getElementById('url-form-container').scrollIntoView({ behavior: 'smooth' });
     }
-
-    // 处理删除按钮点击事件
-    function handleDeleteClick(event) {
-       const button = event.target;
-       const id = button.dataset.id;
-       const key = button.dataset.key;
-       debugLog('删除按钮点击', { id, key });
-       if (id) {
-         const numericId = parseInt(id, 10);
-         if (!isNaN(numericId)) {
-           // 添加确认对话框
-           if (confirm('确定要删除短链接 "' + key + '" (ID: ' + numericId + ') 吗？\n所有相关的访问记录也将被永久删除。')) {
-             deleteRedirect(numericId);
-           } else {
-             debugLog('用户取消删除');
-           }
-         } else {
-           debugLog('错误: 无效的数字ID', { id });
-           showMessage('无法删除：无效的 ID', true);
-         }
-       } else {
-         debugLog('错误: 未在按钮上找到 ID');
-         showMessage('无法删除：缺少 ID', true);
-       }
-    }
-
-
-    // 删除重定向 (实际执行)
+    
+    // 删除重定向
     async function deleteRedirect(id) {
-      debugLog('执行删除重定向', { id });
-
+      debugLog('删除重定向', { id });
+      
+      if (!confirm('确定要删除这个URL重定向吗？所有相关的访问记录也将被删除。')) {
+        return;
+      }
+      
       try {
         const token = localStorage.getItem('token');
-        if (!token) throw new Error('认证失败');
-
+        if (!token) {
+          debugLog('未检测到认证令牌，重定向到登录页面');
+          window.location.href = '/admin/login';
+          return;
+        }
+        
         const deletePromise = fetch('/admin/api/redirects/' + id, {
           method: 'DELETE',
-          headers: { 'Authorization': 'Bearer ' + token }
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
         });
-
+        
         // 添加超时处理
-        const response = await timeout(apiTimeout, deletePromise, 'delete');
-
+        const deleteTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('删除操作超时')), apiTimeout)
+        );
+        
+        const response = await Promise.race([deletePromise, deleteTimeout]);
+        
         if (!response.ok) {
-          if (response.status === 401) throw new Error('认证失败');
-          const error = await response.json().catch(() => ({ error: '删除失败，请重试' }));
-          throw new Error(error.error || '删除失败: ' + response.status);
+          // 检查是否是认证问题
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return;
+          }
+          
+          const error = await response.json();
+          showMessage(error.error || '删除失败，请重试', true);
+          return;
         }
-
+        
         // 重新加载数据
         await loadUrlData();
         showMessage('URL已成功删除', false);
       } catch (error) {
         console.error('删除URL错误:', error);
-        if (error.message === '认证失败') {
-           debugLog('认证失败，重定向到登录页面');
-           localStorage.removeItem('token');
-           localStorage.removeItem('username');
-           window.location.href = '/admin/login';
-        } else {
-           showMessage('删除失败: ' + error.message, true);
-        }
+        showMessage('删除失败: ' + (error.message || '未知错误'), true);
       }
     }
-
+    
     // 显示消息
     function showMessage(message, isError) {
       const messageElement = document.getElementById('form-message');
@@ -1148,90 +1084,112 @@ function getUrlsPage() {
         debugLog('错误: 找不到消息元素');
         return;
       }
-
+      
       messageElement.textContent = message;
       messageElement.className = isError ? 'error' : 'success';
-      messageElement.style.color = isError ? '#e74c3c' : '#2ecc71'; // 使用具体颜色值
-
-      // 5秒后清除消息
+      messageElement.style.color = isError ? 'red' : 'green';
+      
+      // 3秒后清除消息
       setTimeout(() => {
-        if (messageElement.textContent === message) { // 避免清除后续消息
-           messageElement.textContent = '';
-           messageElement.className = '';
-           messageElement.style.color = '';
-        }
-      }, 5000);
+        messageElement.textContent = '';
+        messageElement.className = '';
+        messageElement.style.color = '';
+      }, 3000);
     }
-
+    
     // 保存URL数据
     async function saveUrlData(id, key, url) {
-      // 添加日志: 检查传入的 id 类型和值
-      debugLog('保存URL数据 - 接收到的 id:', { id, type: typeof id });
-      const isUpdate = id && id !== 'undefined' && id !== ''; // 判断是更新还是创建
-
+      debugLog('保存URL数据', { id, key, url });
+      
       try {
         const token = localStorage.getItem('token');
-        if (!token) throw new Error('认证失败');
-
-        let savePromise;
-        const apiUrl = isUpdate ? '/admin/api/redirects/' + id : '/admin/api/redirects';
-        const method = isUpdate ? 'PUT' : 'POST';
-
-        debugLog('保存URL数据 - 判定为 ' + method + '，URL: ' + apiUrl, { id, key, url });
-
-        savePromise = fetch(apiUrl, {
-          method: method,
-          headers: {
-            'Authorization': 'Bearer ' + token,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ key, url })
-        });
-
-        // 添加超时处理
-        const response = await timeout(apiTimeout, savePromise, 'save');
-
-        // 检查HTTP状态码
-        const responseData = await response.json().catch(err => {
-           debugLog('解析响应JSON失败', { status: response.status, error: err });
-           // 如果JSON解析失败，但状态码是成功的范围，可能是一个空响应体
-           if (response.ok) return { success: true, message: isUpdate ? 'URL已成功更新' : 'URL已成功添加' };
-           throw new Error('请求失败: ' + response.status + ' ' + response.statusText);
-        });
-
-        debugLog('保存请求响应', responseData);
-
-        if (!response.ok) {
-          debugLog('保存请求失败', { status: response.status, body: responseData });
-          const errorMessage = responseData.error || '保存失败: ' + response.status;
-          if (response.status === 401) throw new Error('认证失败');
-          if (response.status === 409) throw new Error('此键已被使用'); // 特殊处理冲突错误
-          throw new Error(errorMessage);
+        if (!token) {
+          debugLog('未检测到认证令牌，重定向到登录页面');
+          window.location.href = '/admin/login';
+          return false;
         }
-
+        
+        let savePromise;
+        
+        // 更新或创建
+        if (id) {
+          // 更新现有记录
+          debugLog('发送更新请求');
+          savePromise = fetch('/admin/api/redirects/' + id, {
+            method: 'PUT',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ key, url })
+          });
+        } else {
+          // 创建新记录
+          debugLog('发送创建请求');
+          savePromise = fetch('/admin/api/redirects', {
+            method: 'POST',
+            headers: {
+              'Authorization': 'Bearer ' + token,
+              'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ key, url })
+          });
+        }
+        
+        // 添加超时处理
+        const saveTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('保存操作超时')), apiTimeout)
+        );
+        
+        const response = await Promise.race([savePromise, saveTimeout]);
+        
+        // 检查HTTP状态码
+        if (!response.ok) {
+          const errorText = await response.text();
+          debugLog('保存请求失败', { status: response.status, body: errorText });
+          
+          // 尝试解析JSON响应
+          let errorMessage = '未知错误';
+          try {
+            const errorJson = JSON.parse(errorText);
+            errorMessage = errorJson.error || '保存失败，请重试';
+          } catch {
+            errorMessage = '保存失败: ' + response.status + ' ' + response.statusText;
+          }
+          
+          // 检查是否是认证问题
+          if (response.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return false;
+          }
+          
+          // 显示API返回的错误
+          showMessage(errorMessage, true);
+          return false;
+        }
+        
+        const data = await response.json();
+        debugLog('保存请求响应', data);
+        
         // 成功保存
-        showMessage(responseData.message || (isUpdate ? 'URL已成功更新' : 'URL已成功添加'), false);
+        showMessage(id ? 'URL已成功更新' : 'URL已成功添加', false);
         toggleForm(false); // 关闭表单
         await loadUrlData(); // 重新加载数据
         return true;
       } catch (error) {
         console.error('保存URL错误:', error);
-        if (error.message === '认证失败') {
-           debugLog('认证失败，重定向到登录页面');
-           localStorage.removeItem('token');
-           localStorage.removeItem('username');
-           window.location.href = '/admin/login';
-        } else {
-           showMessage('保存失败: ' + error.message, true);
-        }
+        showMessage('保存失败: ' + (error.message || '未知错误'), true);
         return false;
       }
     }
-
+    
     // 初始化事件处理函数
     function initEventListeners() {
       debugLog('初始化事件监听器');
-
+      
       // 添加URL按钮事件
       const addUrlBtn = document.getElementById('add-url-btn');
       if (addUrlBtn) {
@@ -1244,7 +1202,7 @@ function getUrlsPage() {
       } else {
         debugLog('错误: 找不到添加URL按钮元素');
       }
-
+      
       // 取消按钮事件
       const cancelUrlBtn = document.getElementById('cancel-url-btn');
       if (cancelUrlBtn) {
@@ -1257,7 +1215,7 @@ function getUrlsPage() {
       } else {
         debugLog('错误: 找不到取消按钮元素');
       }
-
+      
       // 重试加载按钮事件
       const retryLoadBtn = document.getElementById('retry-load-btn');
       if (retryLoadBtn) {
@@ -1270,7 +1228,7 @@ function getUrlsPage() {
       } else {
         debugLog('错误: 找不到重试按钮');
       }
-
+      
       // 表单提交事件
       const urlForm = document.getElementById('url-form');
       if (urlForm) {
@@ -1278,54 +1236,32 @@ function getUrlsPage() {
           e.preventDefault();
           e.stopPropagation();
           debugLog('提交了URL表单');
-
+          
           // 防止重复提交
           const saveButton = document.getElementById('save-url-btn');
           if (saveButton) {
             saveButton.disabled = true;
             saveButton.textContent = '正在保存...';
           }
-
-          // 清除旧错误
-          document.getElementById('key-error').textContent = '';
-          document.getElementById('url-error').textContent = '';
-          document.getElementById('form-message').textContent = '';
-
-
+          
           const id = document.getElementById('url-id').value;
           const key = document.getElementById('url-key').value.trim();
           const url = document.getElementById('url-target').value.trim();
-
-          let isValid = true;
-          if (!key) {
-            document.getElementById('key-error').textContent = '键不能为空';
-            isValid = false;
+          
+          if (!key || !url) {
+            showMessage('键和URL不能为空', true);
+            if (!key) document.getElementById('key-error').textContent = '键不能为空';
+            if (!url) document.getElementById('url-error').textContent = 'URL不能为空';
+            if (saveButton) {
+              saveButton.disabled = false;
+              saveButton.textContent = '保存';
+            }
+            return;
           }
-          if (!url) {
-             document.getElementById('url-error').textContent = 'URL不能为空';
-             isValid = false;
-          } else {
-             // 简单的URL格式验证
-             try {
-               new URL(url);
-             } catch (_) {
-               document.getElementById('url-error').textContent = 'URL格式无效';
-               isValid = false;
-             }
-          }
-
-
-          if (!isValid) {
-             if (saveButton) {
-               saveButton.disabled = false;
-               saveButton.textContent = '保存';
-             }
-             return;
-          }
-
+          
           await saveUrlData(id, key, url);
-
-          // 恢复按钮状态 (无论成功失败)
+          
+          // 恢复按钮状态
           if (saveButton) {
             saveButton.disabled = false;
             saveButton.textContent = '保存';
@@ -1335,7 +1271,7 @@ function getUrlsPage() {
         debugLog('错误: 找不到表单或保存按钮');
       }
     }
-
+    
     // 检查页面加载状态并初始化
     function checkReadyState() {
       if (document.readyState === 'loading') {
@@ -1346,50 +1282,33 @@ function getUrlsPage() {
         initPage();
       }
     }
-
+    
     // 页面初始化函数
     function initPage() {
       debugLog('初始化页面');
-
+      
       // 检查认证
       if (!checkAuth()) return;
-
+      
       // 初始化事件监听
       initEventListeners();
-
+      
       // 加载URL数据
       loadUrlData();
-
+      
       // 设置全局错误处理
       window.addEventListener('error', function(event) {
         console.error('全局错误:', event.error);
-        if (!isLoadingData) { // 避免覆盖加载中的错误信息
-          showError('发生未处理错误: ' + (event.error?.message || '未知错误'));
+        if (!isLoadingData) {
+          showError('发生错误: ' + (event.error?.message || '未知错误'));
         }
       });
-       window.addEventListener('unhandledrejection', function(event) {
-        console.error('未处理的 Promise rejection:', event.reason);
-         if (!isLoadingData) {
-           showError('发生异步错误: ' + (event.reason?.message || '未知错误'));
-         }
-      });
     }
-
+    
     // 启动初始化
     checkReadyState();
-
-    // 超时函数定义
-    function timeout(ms, promise, name) {
-      return new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('请求 ' + name + ' 超时 (' + ms + 'ms)')), ms);
-        promise.then(
-          value => { clearTimeout(timer); resolve(value); },
-          error => { clearTimeout(timer); reject(error); }
-        );
-      });
-    }
   `;
-
+  
   return getBasePage('URL管理', content, scripts);
 }
 
@@ -1405,16 +1324,13 @@ function getStatsPage() {
           <option value="1">今天</option>
           <option value="7" selected>过去 7 天</option>
           <option value="30">过去 30 天</option>
-          <option value="90">过去 90 天</option>
-          <option value="365">过去一年</option>
-          <option value="9999">所有时间</option>
         </select>
       </div>
     </div>
-
+    
     <div id="stats-loading" style="text-align: center; padding: 30px;">正在加载统计数据...</div>
     <div id="stats-error" style="display: none; color: red; border: 1px solid red; padding: 10px; margin-bottom: 20px; border-radius: 4px;">加载数据时出错。</div>
-
+    
     <div id="stats-content" style="display: none;">
       <!-- 全局摘要 -->
       <div id="summary-cards" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 20px; margin-bottom: 30px;">
@@ -1436,19 +1352,18 @@ function getStatsPage() {
       <div style="margin-bottom: 40px;">
         <h3 style="margin-bottom: 15px;">访问量趋势</h3>
         <canvas id="visits-timeseries-chart" height="100"></canvas>
-         <div id="timeseries-empty" style="display: none; color: #777; text-align: center; padding: 20px;">暂无时间序列数据</div>
       </div>
 
       <!-- Top N 列表区域 -->
       <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 30px;">
-
+        
         <div>
           <h3 style="margin-bottom: 15px;">Top URLs (按访问量)</h3>
           <table id="top-urls-table">
             <thead><tr><th>短链接</th><th>目标 URL</th><th>访问次数</th></tr></thead>
             <tbody id="top-urls-list"></tbody>
           </table>
-           <div id="top-urls-empty" style="display: none; color: #777; text-align: center; padding: 10px;">暂无数据</div>
+           <div id="top-urls-empty" style="display: none; color: #777;">暂无数据</div>
         </div>
 
         <div>
@@ -1457,7 +1372,7 @@ function getStatsPage() {
             <thead><tr><th>来源域名</th><th>访问次数</th></tr></thead>
             <tbody id="top-referers-list"></tbody>
           </table>
-          <div id="top-referers-empty" style="display: none; color: #777; text-align: center; padding: 10px;">暂无数据</div>
+          <div id="top-referers-empty" style="display: none; color: #777;">暂无数据</div>
         </div>
 
         <div>
@@ -1466,44 +1381,41 @@ function getStatsPage() {
             <thead><tr><th>国家/地区</th><th>访问次数</th></tr></thead>
             <tbody id="top-countries-list"></tbody>
           </table>
-           <div id="top-countries-empty" style="display: none; color: #777; text-align: center; padding: 10px;">暂无数据</div>
+           <div id="top-countries-empty" style="display: none; color: #777;">暂无数据</div>
         </div>
-
+        
         <div>
           <h3 style="margin-bottom: 15px;">Top 浏览器/系统</h3>
            <table id="top-user-agents-table">
             <thead><tr><th>浏览器</th><th>操作系统</th><th>访问次数</th></tr></thead>
             <tbody id="top-user-agents-list"></tbody>
           </table>
-           <div id="top-user-agents-empty" style="display: none; color: #777; text-align: center; padding: 10px;">暂无数据</div>
+           <div id="top-user-agents-empty" style="display: none; color: #777;">暂无数据</div>
         </div>
 
       </div>
-
+      
       <!-- 数据聚合管理面板 -->
       <div style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
         <h3>数据聚合管理</h3>
-        <p>当统计数据显示为空或不准确时，可以通过此功能手动触发特定日期的访问数据聚合。聚合过程可能需要一些时间。</p>
-
-        <div style="display: flex; gap: 10px; margin-top: 15px; align-items: center;">
-          <label for="aggregate-date">选择日期:</label>
+        <p>当统计数据显示为空时，可以通过此功能手动触发数据聚合。</p>
+        
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
           <input type="date" id="aggregate-date" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
-          <button id="trigger-aggregate" style="padding: 8px 15px; background-color: #28a745; color: white; border: none; border-radius: 4px; cursor: pointer;">
+          <button id="trigger-aggregate" style="padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
             触发数据聚合
           </button>
         </div>
-
-        <div id="aggregate-status" style="margin-top: 10px; display: none; padding: 8px; border-radius: 4px;"></div>
+        
+        <div id="aggregate-status" style="margin-top: 10px; display: none;"></div>
       </div>
     </div>
   `;
 
   // 引入 Chart.js CDN和外部统计JS文件
-  const chartJsScript = '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>'; // 更新Chart.js版本
-  // 确保 admin-stats.js 路径正确，相对于HTML页面
-  const statsScript = '<script src="/admin/js/admin-stats.js"></script>';
-
-
+  const chartJsScript = '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>';
+  const statsScript = '<script src="js/admin-stats.js"></script>';
+  
   // 添加手动聚合的JavaScript
   const aggregateScript = `
     <script>
@@ -1514,30 +1426,21 @@ function getStatsPage() {
         aggregateButton.addEventListener('click', async function() {
           const dateInput = document.getElementById('aggregate-date');
           const statusElement = document.getElementById('aggregate-status');
-
+          
           if (!dateInput.value) {
             statusElement.textContent = '请选择日期';
             statusElement.style.display = 'block';
             statusElement.style.color = 'red';
-            statusElement.style.backgroundColor = '#ffecec';
-            statusElement.style.border = '1px solid red';
             return;
           }
-
+          
           // 显示处理中状态
-          aggregateButton.disabled = true;
-          aggregateButton.textContent = '处理中...';
-          statusElement.textContent = '正在处理聚合请求，请稍候...';
+          statusElement.textContent = '正在处理聚合请求...';
           statusElement.style.display = 'block';
-          statusElement.style.color = '#0056b3';
-          statusElement.style.backgroundColor = '#cce5ff';
-          statusElement.style.border = '1px solid #b8daff';
-
-
+          statusElement.style.color = '#007bff';
+          
           try {
             const token = localStorage.getItem('token');
-            if (!token) throw new Error('认证失败');
-
             const response = await fetch('/admin/api/aggregate', {
               method: 'POST',
               headers: {
@@ -1546,50 +1449,34 @@ function getStatsPage() {
               },
               body: JSON.stringify({ date: dateInput.value })
             });
-
+            
             const result = await response.json();
-
-            if (response.ok && result.success) {
-              statusElement.textContent = result.message || '数据聚合成功。统计数据将在稍后更新。';
+            
+            if (result.success) {
+              statusElement.textContent = '数据聚合成功，请刷新页面查看最新统计。';
               statusElement.style.color = 'green';
-              statusElement.style.backgroundColor = '#d4edda';
-              statusElement.style.border = '1px solid #c3e6cb';
-
-              // 提示用户刷新或等待
-              // setTimeout(() => { window.location.reload(); }, 5000); // 可选：自动刷新
-
+              
+              // 3秒后自动刷新页面
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
             } else {
-              throw new Error(result.error || '聚合失败: ' + response.status);
+              statusElement.textContent = '聚合失败: ' + (result.error || '未知错误');
+              statusElement.style.color = 'red';
             }
           } catch (error) {
             statusElement.textContent = '处理请求时出错: ' + error.message;
             statusElement.style.color = 'red';
-            statusElement.style.backgroundColor = '#ffecec';
-            statusElement.style.border = '1px solid red';
-             if (error.message === '认证失败') {
-               localStorage.removeItem('token');
-               localStorage.removeItem('username');
-               window.location.href = '/admin/login';
-             }
-          } finally {
-             aggregateButton.disabled = false;
-             aggregateButton.textContent = '触发数据聚合';
-             // 5秒后隐藏状态消息
-             setTimeout(() => { statusElement.style.display = 'none'; }, 5000);
           }
         });
       }
-
+      
       // 设置日期选择器默认值为昨天
       const yesterday = new Date();
       yesterday.setDate(yesterday.getDate() - 1);
       const dateInput = document.getElementById('aggregate-date');
       if (dateInput) {
-        // 格式化为 YYYY-MM-DD
-        const year = yesterday.getFullYear();
-        const month = String(yesterday.getMonth() + 1).padStart(2, '0');
-        const day = String(yesterday.getDate()).padStart(2, '0');
-        dateInput.value = year + '-' + month + '-' + day;
+        dateInput.valueAsDate = yesterday;
       }
     });
     </script>
