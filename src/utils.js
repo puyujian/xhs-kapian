@@ -42,6 +42,34 @@ function formatDateTime(date) {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 }
 
+// 标准化日期为YYYY-MM-DD格式
+function standardizeDate(date) {
+  if (!date) return null;
+  
+  if (typeof date === 'string') {
+    // 检查是否已经是YYYY-MM-DD格式
+    if (/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return date;
+    }
+    // 处理其他字符串格式
+    try {
+      const d = new Date(date);
+      if (isNaN(d.getTime())) return null;
+      return d.toISOString().split('T')[0];
+    } catch (e) {
+      console.error('无法解析日期字符串:', date, e);
+      return null;
+    }
+  }
+  
+  if (date instanceof Date) {
+    if (isNaN(date.getTime())) return null;
+    return date.toISOString().split('T')[0];
+  }
+  
+  return null;
+}
+
 // 生成随机字符串
 function generateRandomString(length = 32) {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
@@ -133,5 +161,6 @@ module.exports = {
   generateRandomString,
   escapeHtml,
   parseUserAgent,
-  getRefererDomain
+  getRefererDomain,
+  standardizeDate
 }; 

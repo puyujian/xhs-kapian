@@ -184,6 +184,39 @@ async function handleAdminApi(request, env, db, auth) {
     return jsonResponse({ topUserAgents });
   }
 
+  // 手动触发数据聚合
+  if (path === '/admin/api/aggregate' && request.method === 'POST') {
+    try {
+      const requestData = await request.json();
+      const dateStr = requestData.date; // 指定日期，格式：YYYY-MM-DD
+      
+      // 验证日期格式
+      if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+        return jsonResponse({
+          success: false,
+          error: '无效的日期格式，请使用YYYY-MM-DD格式'
+        }, 400);
+      }
+      
+      console.log(`管理员 ${user.username} 手动触发聚合，日期: ${dateStr}`);
+      
+      // 执行聚合
+      const result = await db.aggregateDailyVisits(dateStr);
+      
+      return jsonResponse({ 
+        success: true, 
+        result,
+        message: result.success ? '数据聚合成功' : '数据聚合失败' 
+      });
+    } catch (error) {
+      console.error('手动触发聚合出错:', error);
+      return jsonResponse({
+        success: false,
+        error: '聚合处理出错: ' + error.message
+      }, 500);
+    }
+  }
+
   // 404 Not Found for other admin API routes
   return jsonResponse({ error: 'API Endpoint Not Found' }, 404);
 }
@@ -1361,15 +1394,96 @@ function getStatsPage() {
         </div>
 
       </div>
+      
+      <!-- 数据聚合管理面板 -->
+      <div style="margin-top: 40px; padding: 20px; background-color: #f8f9fa; border-radius: 5px;">
+        <h3>数据聚合管理</h3>
+        <p>当统计数据显示为空时，可以通过此功能手动触发数据聚合。</p>
+        
+        <div style="display: flex; gap: 10px; margin-top: 15px;">
+          <input type="date" id="aggregate-date" style="padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+          <button id="trigger-aggregate" style="padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer;">
+            触发数据聚合
+          </button>
+        </div>
+        
+        <div id="aggregate-status" style="margin-top: 10px; display: none;"></div>
+      </div>
     </div>
   `;
 
   // 引入 Chart.js CDN和外部统计JS文件
   const chartJsScript = '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>';
   const statsScript = '<script src="/admin/js/admin-stats.js"></script>';
+  
+  // 添加手动聚合的JavaScript
+  const aggregateScript = `
+    <script>
+    // 手动聚合功能
+    document.addEventListener('DOMContentLoaded', function() {
+      const aggregateButton = document.getElementById('trigger-aggregate');
+      if (aggregateButton) {
+        aggregateButton.addEventListener('click', async function() {
+          const dateInput = document.getElementById('aggregate-date');
+          const statusElement = document.getElementById('aggregate-status');
+          
+          if (!dateInput.value) {
+            statusElement.textContent = '请选择日期';
+            statusElement.style.display = 'block';
+            statusElement.style.color = 'red';
+            return;
+          }
+          
+          // 显示处理中状态
+          statusElement.textContent = '正在处理聚合请求...';
+          statusElement.style.display = 'block';
+          statusElement.style.color = '#007bff';
+          
+          try {
+            const token = localStorage.getItem('token');
+            const response = await fetch('/admin/api/aggregate', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json',
+                'Authorization': 'Bearer ' + token
+              },
+              body: JSON.stringify({ date: dateInput.value })
+            });
+            
+            const result = await response.json();
+            
+            if (result.success) {
+              statusElement.textContent = '数据聚合成功，请刷新页面查看最新统计。';
+              statusElement.style.color = 'green';
+              
+              // 3秒后自动刷新页面
+              setTimeout(() => {
+                window.location.reload();
+              }, 3000);
+            } else {
+              statusElement.textContent = '聚合失败: ' + (result.error || '未知错误');
+              statusElement.style.color = 'red';
+            }
+          } catch (error) {
+            statusElement.textContent = '处理请求时出错: ' + error.message;
+            statusElement.style.color = 'red';
+          }
+        });
+      }
+      
+      // 设置日期选择器默认值为昨天
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const dateInput = document.getElementById('aggregate-date');
+      if (dateInput) {
+        dateInput.valueAsDate = yesterday;
+      }
+    });
+    </script>
+  `;
 
   // 将脚本传递给基础页面模板
-  return getBasePage('访问统计', content, chartJsScript + statsScript);
+  return getBasePage('访问统计', content, chartJsScript + statsScript + aggregateScript);
 }
 
 module.exports = {

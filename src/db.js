@@ -225,11 +225,32 @@ class Database {
       `SELECT COUNT(*) as count FROM redirects`
     ).first();
 
+    // 检查聚合数据是否为空，若为空则回退到原始visits表查询
+    if (!results?.totalVisits) {
+      console.log(`聚合表中没有 ${startDate} 之后的数据，回退到 visits 表查询`);
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           COUNT(*) as totalVisits,
+           COUNT(DISTINCT redirect_id) as activeRedirects
+         FROM visits
+         WHERE timestamp >= ?`
+      ).bind(`${startDate} 00:00:00`).first();
+
+      return {
+        totalVisits: visitsResults?.totalVisits || 0,
+        activeRedirects: visitsResults?.activeRedirects || 0,
+        totalRedirects: totalRedirectsResult?.count || 0,
+        periodDays: days,
+        source: 'visits_table' // 标记数据来源
+      };
+    }
+
     return {
       totalVisits: results?.totalVisits || 0,
       activeRedirects: results?.activeRedirects || 0,
       totalRedirects: totalRedirectsResult?.count || 0,
-      periodDays: days
+      periodDays: days,
+      source: 'summary_table' // 标记数据来源
     };
   }
 
@@ -249,6 +270,25 @@ class Database {
        GROUP BY date 
        ORDER BY date ASC`
     ).bind(startDate).all();
+
+    // 检查是否有数据
+    if (!results.results || results.results.length === 0) {
+      console.log(`聚合表中没有时间序列数据，回退到 visits 表查询`);
+      
+      // 从visits表生成时间序列数据
+      // 需要按日期分组统计访问量
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           date(timestamp) as date, 
+           COUNT(*) as count
+         FROM visits
+         WHERE timestamp >= ?
+         GROUP BY date(timestamp)
+         ORDER BY date ASC`
+      ).bind(`${startDate} 00:00:00`).all();
+      
+      return visitsResults.results || [];
+    }
 
     return results.results || [];
   }
@@ -272,6 +312,51 @@ class Database {
        LIMIT ?`
     ).bind(startDate, limit).all();
 
+    // 检查是否有数据
+    if (!results.results || results.results.length === 0) {
+      console.log(`聚合表中没有Referer数据，回退到 visits 表查询`);
+      
+      // 从visits表获取Referer数据
+      // 注意：这里无法在SQL中直接使用getRefererDomain函数
+      // 我们需要获取所有referer然后在JavaScript中处理
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           referer, 
+           COUNT(*) as count
+         FROM visits
+         WHERE timestamp >= ? AND referer IS NOT NULL AND referer != '直接访问' AND referer != '未知'
+         GROUP BY referer
+         ORDER BY count DESC
+         LIMIT 50` // 获取更多数据，以便后续聚合
+      ).bind(`${startDate} 00:00:00`).all();
+      
+      if (!visitsResults.results || visitsResults.results.length === 0) {
+        return [];
+      }
+      
+      // 导入处理函数
+      const { getRefererDomain } = require('./utils');
+      
+      // 按域名重新聚合
+      const domainMap = new Map();
+      
+      for (const visit of visitsResults.results) {
+        const domain = getRefererDomain(visit.referer);
+        if (domain && domain !== 'Direct/Unknown' && domain !== 'Invalid Referer') {
+          const currentCount = domainMap.get(domain) || 0;
+          domainMap.set(domain, currentCount + visit.count);
+        }
+      }
+      
+      // 转换为数组并排序
+      const topReferers = Array.from(domainMap.entries())
+        .map(([referer_domain, count]) => ({ referer_domain, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+      
+      return topReferers;
+    }
+    
     return results.results || [];
   }
 
@@ -294,6 +379,53 @@ class Database {
        LIMIT ?`
     ).bind(startDate, limit).all();
 
+    // 检查是否有数据
+    if (!results.results || results.results.length === 0) {
+      console.log(`聚合表中没有UserAgent数据，回退到 visits 表查询`);
+      
+      // 从visits表获取UserAgent数据
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           user_agent, 
+           COUNT(*) as count
+         FROM visits
+         WHERE timestamp >= ? AND user_agent IS NOT NULL AND user_agent != '未知'
+         GROUP BY user_agent
+         ORDER BY count DESC
+         LIMIT 50` // 获取更多数据，以便后续处理
+      ).bind(`${startDate} 00:00:00`).all();
+      
+      if (!visitsResults.results || visitsResults.results.length === 0) {
+        return [];
+      }
+      
+      // 导入处理函数
+      const { parseUserAgent } = require('./utils');
+      
+      // 按浏览器和操作系统重新聚合
+      const uaMap = new Map();
+      
+      for (const visit of visitsResults.results) {
+        const { browser, os } = parseUserAgent(visit.user_agent);
+        if (browser !== 'Unknown' && os !== 'Unknown') {
+          const key = `${browser}|${os}`;
+          const currentCount = uaMap.get(key) || 0;
+          uaMap.set(key, currentCount + visit.count);
+        }
+      }
+      
+      // 转换为数组并排序
+      const topUserAgents = Array.from(uaMap.entries())
+        .map(([key, count]) => {
+          const [browser, os] = key.split('|');
+          return { browser, os, count };
+        })
+        .sort((a, b) => b.count - a.count)
+        .slice(0, limit);
+      
+      return topUserAgents;
+    }
+    
     return results.results || [];
   }
 
@@ -316,6 +448,25 @@ class Database {
        LIMIT ?`
     ).bind(startDate, limit).all();
 
+    // 检查是否有数据
+    if (!results.results || results.results.length === 0) {
+      console.log(`聚合表中没有国家分布数据，回退到 visits 表查询`);
+      
+      // 从visits表获取国家分布数据
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           country, 
+           COUNT(*) as count
+         FROM visits
+         WHERE timestamp >= ? AND country IS NOT NULL AND country != 'Unknown'
+         GROUP BY country
+         ORDER BY count DESC
+         LIMIT ?`
+      ).bind(`${startDate} 00:00:00`, limit).all();
+      
+      return visitsResults.results || [];
+    }
+    
     return results.results || [];
   }
   
@@ -342,6 +493,28 @@ class Database {
        ORDER BY total_visits DESC 
        LIMIT ?`
     ).bind(startDate, limit).all();
+    
+    // 检查是否有数据
+    if (!results.results || results.results.length === 0) {
+      console.log(`聚合表中没有访问量 URL 数据，回退到 visits 表查询`);
+      
+      // 从visits表获取 Top URLs
+      const visitsResults = await this.db.prepare(
+        `SELECT 
+           v.redirect_id, 
+           r.key, 
+           r.url, 
+           COUNT(*) as total_visits
+         FROM visits v
+         JOIN redirects r ON v.redirect_id = r.id
+         WHERE v.timestamp >= ?
+         GROUP BY v.redirect_id, r.key, r.url
+         ORDER BY total_visits DESC
+         LIMIT ?`
+      ).bind(`${startDate} 00:00:00`, limit).all();
+      
+      return visitsResults.results || [];
+    }
     
     return results.results || [];
   }
