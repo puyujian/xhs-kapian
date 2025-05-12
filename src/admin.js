@@ -122,10 +122,18 @@ async function handleAdminApi(request, env, db, auth) {
       }
       // --- DEBUG LOGGING END ---
 
-      if (existing && parseInt(existing.id, 10) !== id) { // 强制将 existing.id 转为数字再比较
-        console.log(`[DEBUG PUT /admin/api/redirects/:id] Conflict detected! Returning 409.`); // 添加日志确认冲突
-        return jsonResponse({ error: '此键已被使用' }, 409);
+      const existingId = existing ? parseInt(existing.id, 10) : NaN;
+      // 确保 id 和 existingId 都是有效的数字再进行比较
+      if (existing && !isNaN(id) && !isNaN(existingId) && existingId !== id) {
+          console.log(`[DEBUG PUT /admin/api/redirects/:id] Conflict detected! Key '${key}' is used by ID ${existingId}, current ID is ${id}. Returning 409.`);
+          return jsonResponse({ error: '此键已被使用' }, 409);
+      } else if (existing && (isNaN(id) || isNaN(existingId))) {
+          // 如果存在 key 但 ID 无效或比较失败，记录错误
+          console.error(`[ERROR PUT /admin/api/redirects/:id] Invalid ID comparison during update. Path ID: ${id}, Existing ID from DB: ${existing?.id}. Key: ${key}`);
+          // 可以选择返回错误，或者根据业务逻辑决定是否继续。这里暂时仅记录错误。
+          // return jsonResponse({ error: '内部服务器错误：无法验证键唯一性' }, 500);
       }
+      // 如果 existing 不存在，或者 existing.id === id (且 ID 有效)，则继续执行更新
       
       await db.updateRedirect(id, key, url);
       return jsonResponse({ success: true });
