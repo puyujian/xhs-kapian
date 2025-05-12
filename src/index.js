@@ -118,9 +118,28 @@ const app = {
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
+          return new Response(
+            JSON.stringify({ error: `链接已不存在，请联系管理，key：${key}` }),
+            {
+              status: 404,
+              headers: {
+                'Content-Type': 'application/json;charset=UTF-8',
+              },
+            }
+          );
         }
       } else {
         console.log('小红书特定URL格式中未找到key参数');
+        // 如果没有key参数，也应该返回一个明确的错误信息
+        return new Response(
+          JSON.stringify({ error: '未提供key参数' }),
+          {
+            status: 400, // Bad Request
+            headers: {
+              'Content-Type': 'application/json;charset=UTF-8',
+            },
+          }
+        );
       }
     }
     // 处理其他小红书相关URL或一般的pei.ee域名
@@ -146,9 +165,28 @@ const app = {
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
+          return new Response(
+            JSON.stringify({ error: `链接已不存在，请联系管理，key：${key}` }),
+            {
+              status: 404,
+              headers: {
+                'Content-Type': 'application/json;charset=UTF-8',
+              },
+            }
+          );
         }
       } else {
         console.log('小红书URL中未找到key参数');
+        // 如果没有key参数，也应该返回一个明确的错误信息
+        return new Response(
+          JSON.stringify({ error: '未提供key参数' }),
+          {
+            status: 400, // Bad Request
+            headers: {
+              'Content-Type': 'application/json;charset=UTF-8',
+            },
+          }
+        );
       }
     } else {
       // 按照原来的流程处理普通URL格式
@@ -205,17 +243,27 @@ const app = {
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
+          return new Response(
+            JSON.stringify({ error: `链接已不存在，请联系管理，key：${key}` }),
+            {
+              status: 404,
+              headers: {
+                'Content-Type': 'application/json;charset=UTF-8',
+              },
+            }
+          );
         }
       }
     }
     
-    // 404 Not Found
+    // 如果执行到这里，说明没有有效的key或者其他处理逻辑没有匹配
+    // 默认的404响应
     return new Response(
-      JSON.stringify({ error: 'Not Found' }),
+      JSON.stringify({ error: '请求的资源未找到或无效' }), // 更通用的错误信息
       {
         status: 404,
         headers: {
-          'Content-Type': 'application/json',
+          'Content-Type': 'application/json;charset=UTF-8',
         },
       }
     );
