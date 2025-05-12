@@ -156,7 +156,7 @@ async function handleAdminApi(request, env, db, auth) {
   // 删除重定向
   if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'DELETE') {
     try {
-      const id = parseInt(path.split('/')[3], 10);
+      const id = parseInt(path.split('/')[4], 10);
       await db.deleteRedirect(id);
       return jsonResponse({ success: true });
     } catch (e) {
@@ -166,7 +166,7 @@ async function handleAdminApi(request, env, db, auth) {
   }
   // 获取特定重定向的详细访问数据 (保留，可能用于查看原始日志)
   if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
-    const id = parseInt(path.split('/')[3], 10);
+    const id = parseInt(path.split('/')[4], 10);
     const visits = await db.getRedirectVisits(id);
     return jsonResponse({ visits: visits?.results || [] }); // 确保返回数组
   }
