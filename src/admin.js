@@ -125,8 +125,8 @@ async function handleAdminApi(request, env, db, auth) {
       }
       // --- DEBUG LOGGING END ---
 
-      // 直接比较字符串ID
-      if (existing && existing.id !== id) {
+      // 比较前将ID转换为字符串，避免类型不匹配问题
+      if (existing && String(existing.id) !== String(id)) {
           console.log(`[DEBUG PUT /admin/api/redirects/:id] Conflict detected! Key '${key}' is used by ID ${existing.id}, current ID is ${id}. Returning 409.`);
           return jsonResponse({ error: '此键已被使用' }, 409);
       }
