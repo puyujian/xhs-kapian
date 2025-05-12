@@ -107,7 +107,7 @@ async function handleAdminApi(request, env, db, auth) {
       
       // 检查键是否已存在且不是当前项
       const existing = await db.getRedirectByKey(key);
-      if (existing && parseInt(existing.id, 10) !== id) { // 强制将 existing.id 转为数字再比较
+      if (existing && parseInt(existing.id, 10) !== parseInt(id, 10)) { // 确保两边都转为数字再比较
         return jsonResponse({ error: '此键已被使用' }, 409);
       }
       
