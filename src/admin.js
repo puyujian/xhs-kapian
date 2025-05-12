@@ -800,98 +800,78 @@ function getUrlsPage() {
       console.error('URL管理错误:', message);
     }
     
-    // 加载URL数据和统计数据
+    // 加载URL数据
     async function loadUrlData() {
-      debugLog('开始加载URL数据和统计');
-
+      debugLog('开始加载URL数据');
+      
       if (isLoadingData) {
         debugLog('已有加载请求正在进行中，跳过');
         return;
       }
-
+      
       if (!checkAuth()) return;
-
+      
       isLoadingData = true;
-
+      
       try {
         const token = localStorage.getItem('token');
-
+        
         // 隐藏错误消息，显示加载消息
         const errorElement = document.getElementById('error-message');
         if (errorElement) errorElement.style.display = 'none';
-
+        
         const loadingElement = document.getElementById('loading-message');
         if (loadingElement) loadingElement.style.display = 'block';
-
+        
         const retryButton = document.getElementById('retry-load-btn');
         if (retryButton) retryButton.style.display = 'none';
-
-        const tableElement = document.getElementById('urls-table');
-        if (tableElement) tableElement.style.display = 'none';
-
-        // 并行获取重定向列表和Top URLs统计数据
-        debugLog('并行发送获取重定向和Top URLs统计请求');
+        
+        // 获取所有重定向，添加超时处理
+        debugLog('发送获取重定向请求');
         const redirectsPromise = fetch('/admin/api/redirects', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-        // 获取所有时间的Top URLs统计，以便显示总访问次数
-        const statsPromise = fetch('/admin/api/stats/top-urls?limit=1000&days=9999', {
-          headers: { 'Authorization': 'Bearer ' + token }
-        });
-
-        // 添加超时处理
-        const timeout = (ms, promise, name) => new Promise((resolve, reject) => {
-          const timer = setTimeout(() => reject(new Error('请求 ' + name + ' 超时 (' + ms + 'ms)')), ms);
-          promise.then(
-            value => { clearTimeout(timer); resolve(value); },
-            error => { clearTimeout(timer); reject(error); }
-          );
-        });
-
-        const [redirectsResponse, statsResponse] = await Promise.all([
-          timeout(apiTimeout, redirectsPromise, 'redirects'),
-          timeout(apiTimeout, statsPromise, 'stats')
-        ]);
-
-        // 处理重定向列表响应
-        if (!redirectsResponse.ok) {
-          if (redirectsResponse.status === 401) throw new Error('认证失败');
-          const errorText = await redirectsResponse.text();
-          throw new Error('获取重定向列表失败: ' + redirectsResponse.status + ' - ' + errorText);
-        }
-        const redirectsData = await redirectsResponse.json();
-        redirects = redirectsData.redirects?.results || redirectsData.redirects || [];
-        debugLog('成功获取重定向数据', redirects);
-
-        // 处理统计数据响应
-        if (!statsResponse.ok) {
-          // 统计数据获取失败不阻塞页面渲染，但记录错误
-          console.error('获取Top URLs统计失败:', statsResponse.status);
-          statsMap.clear(); // 清空旧数据
-        } else {
-          const statsData = await statsResponse.json();
-          statsMap.clear(); // 清空旧数据
-          if (statsData.topUrls && Array.isArray(statsData.topUrls)) {
-             statsData.topUrls.forEach(stat => {
-               statsMap.set(stat.redirect_id, stat.total_visits);
-             });
+          headers: {
+            'Authorization': 'Bearer ' + token
           }
-          debugLog('成功获取并处理Top URLs统计数据', statsMap);
+        });
+        
+        // 添加超时处理
+        const redirectsTimeout = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('获取重定向数据超时')), apiTimeout)
+        );
+        
+        const redirectsResponse = await Promise.race([redirectsPromise, redirectsTimeout]);
+        
+        if (!redirectsResponse.ok) {
+          // 检查是否是认证问题
+          if (redirectsResponse.status === 401) {
+            debugLog('认证失败，重定向到登录页面');
+            localStorage.removeItem('token');
+            localStorage.removeItem('username');
+            window.location.href = '/admin/login';
+            return;
+          }
+          
+          const errorText = await redirectsResponse.text();
+          debugLog('API响应错误', { status: redirectsResponse.status, body: errorText });
+          throw new Error('API响应错误: ' + redirectsResponse.status + ' - ' + errorText);
         }
-
+        
+        const redirectsData = await redirectsResponse.json();
+        // 修改点：确保 redirects 总是数组，并从正确的位置获取数据
+        redirects = redirectsData.redirects.results || []; 
+        debugLog('成功获取重定向数据', redirects);
+        
+        // 获取统计数据（如果需要的话，可以并行或串行获取）
+        // debugLog('发送获取统计数据请求');
+        // const statsPromise = fetch('/admin/api/stats', { ... });
+        // ... 处理 stats ...
+        
         // 渲染表格
         renderTable();
-
+        
       } catch (error) {
         debugLog('加载URL数据时出错', error);
-        if (error.message === '认证失败') {
-           debugLog('认证失败，重定向到登录页面');
-           localStorage.removeItem('token');
-           localStorage.removeItem('username');
-           window.location.href = '/admin/login';
-        } else {
-           showError('加载URL数据失败: ' + error.message);
-        }
+        showError('加载URL数据失败: ' + error.message);
       } finally {
         isLoadingData = false;
         const loadingElement = document.getElementById('loading-message');
