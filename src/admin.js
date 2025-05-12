@@ -133,17 +133,14 @@ async function handleAdminApi(request, env, db, auth) {
           isEqual: existingId === currentId
         });
         
-        // 增强比较逻辑，处理可能的NaN情况
+        // 严格验证 ID 是否为有效数字
         if (isNaN(existingId) || isNaN(currentId)) {
-          console.log('警告: ID解析为NaN，进行字符串比较', {
-            existingIdStr: String(existing.id),
-            currentIdStr: String(id)
-          });
-          // 如果解析失败，回退到字符串比较
-          if (String(existing.id) !== String(id)) {
-            return jsonResponse({ error: '此键已被使用 (ID类型不匹配)' }, 409);
-          }
-        } else if (existingId !== currentId) {
+          console.error('错误: 无效的记录 ID', { existingId, currentId });
+          return jsonResponse({ error: '无效的记录 ID，无法完成更新' }, 400);
+        }
+        
+        // 仅在 ID 有效时进行数字比较
+        if (existingId !== currentId) {
           // 数字比较 - 只有当非当前项目的键相同时，才报错
           return jsonResponse({ error: '此键已被使用' }, 409);
         }
