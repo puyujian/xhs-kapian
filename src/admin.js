@@ -98,7 +98,7 @@ async function handleAdminApi(request, env, db, auth) {
   // 更新重定向
   if (path.match(/^\/admin\/api\/redirects\/\d+$/) && request.method === 'PUT') {
     try {
-      const id = parseInt(path.split('/')[3], 10);
+      const id = parseInt(path.split('/')[4], 10);
       const { key, url } = await request.json();
       
       console.log('更新重定向请求', { id, key, url });
