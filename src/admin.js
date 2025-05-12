@@ -107,26 +107,8 @@ async function handleAdminApi(request, env, db, auth) {
       
       // 检查键是否已存在且不是当前项
       const existing = await db.getRedirectByKey(key);
-      
-      // 增加日志记录，帮助诊断问题
-      console.log('更新重定向:', { 
-        requestId: id, 
-        requestIdType: typeof id, 
-        key, 
-        url,
-        existing: existing ? { id: existing.id, idType: typeof existing.id } : null
-      });
-      
-      // 修复ID比较逻辑
-      if (existing) {
-        // 确保两边都是数字类型进行比较
-        const existingId = parseInt(existing.id, 10);
-        
-        // 只有当找到的记录ID与当前编辑ID不同时才报错
-        if (existingId !== id) { 
-          return jsonResponse({ error: '此键已被使用' }, 409);
-        }
-        // 如果ID相同，说明是同一条记录，允许更新
+      if (existing && parseInt(existing.id, 10) !== id) { // 强制将 existing.id 转为数字再比较
+        return jsonResponse({ error: '此键已被使用' }, 409);
       }
       
       await db.updateRedirect(id, key, url);
