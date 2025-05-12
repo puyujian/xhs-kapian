@@ -22,16 +22,21 @@ async function fetchStatsData(endpoint, params = {}) {
 
     if (!response.ok) {
       if (response.status === 401) {
+        console.warn('认证失败，重定向到登录页面');
         window.location.href = '/admin/login'; // 重定向到登录
         return null;
       }
+      // 处理其他错误状态码
       const errorData = await response.json().catch(() => ({ error: 'API 请求失败，状态码: ' + response.status }));
-      throw new Error(errorData.error || '未知 API 错误');
+      const errorMessage = errorData.error || ('请求 ' + endpoint + ' 失败，状态码: ' + response.status);
+      console.error('API Error:', errorMessage, 'Endpoint:', endpoint);
+      showError(errorMessage); // 调用 showError
+      return null; // 返回 null
     }
     return await response.json();
-  } catch (error) {
+  } catch (error) { // 这个 catch 主要捕获网络错误或 response.json() 解析错误
     // 修改: 使用字符串拼接而不是模板字符串
-    const errorEndpointMsg = '请求 ' + endpoint + ' 出错:';
+    const errorEndpointMsg = '请求 ' + endpoint + ' 时发生意外错误:';
     const errorLoadingMsg = '加载数据出错: ' + error.message;
     console.error(errorEndpointMsg, error);
     showError(errorLoadingMsg);
