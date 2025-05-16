@@ -17,9 +17,15 @@ class Database {
   async addVisit(redirectId, requestInfo) {
     const { ip, userAgent, referer, country } = requestInfo;
     
-    return await this.db.prepare(
+    // 插入新的 visit 记录
+    await this.db.prepare(
       "INSERT INTO visits (redirect_id, ip, user_agent, referer, country) VALUES (?, ?, ?, ?, ?)"
     ).bind(redirectId, ip, userAgent, referer, country).run();
+
+    // 更新 redirects 表的 visit_count 和 last_visit_at
+    return await this.db.prepare(
+      "UPDATE redirects SET visit_count = visit_count + 1, last_visit_at = CURRENT_TIMESTAMP WHERE id = ?"
+    ).bind(redirectId).run();
   }
 
   // 添加新的重定向
@@ -52,34 +58,35 @@ class Database {
   // 获取所有重定向
   async getAllRedirects() {
     return await this.db.prepare(
-      "SELECT * FROM redirects ORDER BY created_at DESC"
+      "SELECT id, key, url, created_at, visit_count, last_visit_at FROM redirects ORDER BY created_at DESC"
     ).all();
   }
 
   // 获取重定向访问统计
   async getRedirectStats() {
     return await this.db.prepare(`
-      SELECT 
-        r.id, 
-        r.key, 
-        r.url, 
-        r.created_at,
-        (SELECT COUNT(*) FROM visits v WHERE v.redirect_id = r.id) as visit_count, -- 实时计数，可能慢
-        (SELECT MAX(v.timestamp) FROM visits v WHERE v.redirect_id = r.id) as last_visit -- 实时最后访问，可能慢
-      FROM 
-        redirects r
-      ORDER BY 
-        r.created_at DESC
+      SELECT
+        id,
+        key,
+        url,
+        created_at,
+        visit_count,
+        last_visit_at
+      FROM
+        redirects
+      ORDER BY
+        created_at DESC
     `).all();
   }
 
   // 获取特定重定向的详细访问数据
-  async getRedirectVisits(redirectId) {
+  async getRedirectVisits(redirectId, limit = 50, offset = 0) {
     return await this.db.prepare(`
-      SELECT * FROM visits
+      SELECT id, ip, user_agent, referer, country, timestamp FROM visits
       WHERE redirect_id = ?
       ORDER BY timestamp DESC
-    `).bind(redirectId).all();
+      LIMIT ? OFFSET ?
+    `).bind(redirectId, limit, offset).all();
   }
 
   // 获取按国家/地区统计的访问数据

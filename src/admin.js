@@ -104,7 +104,11 @@ async function handleAdminApi(request, env, db, auth) {
   // 获取特定重定向的详细访问数据
   if (path.match(/^\/admin\/api\/redirects\/\d+\/visits$/) && request.method === 'GET') {
     const id = parseInt(path.split('/')[4], 10);
-    const visits = await db.getRedirectVisits(id);
+    const page = parseInt(params.get('page') || '1', 10);
+    const limit = parseInt(params.get('limit') || '50', 10);
+    const offset = (page - 1) * limit;
+    
+    const visits = await db.getRedirectVisits(id, limit, offset);
     return jsonResponse({ visits: visits?.results || [] });
   }
 
