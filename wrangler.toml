@@ -3,8 +3,12 @@ main = "src/index.js"
 compatibility_date = "2023-12-01"
 compatibility_flags = ["nodejs_compat"]
 
-[site]
-bucket = "./public"
+# [site]
+# bucket = "./public"
+
+[[r2_buckets]]
+binding = "STATIC_ASSETS"
+bucket_name = "xhs"
 
 [vars]
 # 在环境变量中设置JWT密钥（应当使用随机生成的值）

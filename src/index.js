@@ -3,6 +3,95 @@ const Auth = require('./auth');
 const { handleAdmin } = require('./admin');
 const { getClientInfo } = require('./utils');
 
+// 辅助函数：根据文件扩展名获取 MIME 类型
+function getMimeType(filename) {
+  const extension = filename.split('.').pop().toLowerCase();
+  switch (extension) {
+    case 'html':
+      return 'text/html;charset=UTF-8';
+    case 'js':
+      return 'application/javascript;charset=UTF-8';
+    case 'css':
+      return 'text/css;charset=UTF-8';
+    case 'png':
+      return 'image/png';
+    case 'jpg':
+    case 'jpeg':
+      return 'image/jpeg';
+    case 'ico':
+      return 'image/x-icon';
+    case 'svg':
+      return 'image/svg+xml';
+    case 'json':
+      return 'application/json;charset=UTF-8';
+    default:
+      return 'application/octet-stream'; // 默认类型
+  }
+}
+
+// 辅助函数：从 R2 提供静态资源
+async function serveStaticAssetFromR2(request, env, path) {
+  if (!env.STATIC_ASSETS) {
+    console.error("[ERROR] R2 binding 'STATIC_ASSETS' is not available.");
+    return new Response("Static asset serving misconfigured.", { status: 500 });
+  }
+
+  let objectKey = path.startsWith('/') ? path.substring(1) : path;
+
+  // 智能处理 admin 目录下的 HTML 文件请求
+  if (objectKey === 'admin' || objectKey === 'admin/') {
+    objectKey = 'admin/index.html';
+  } else if (objectKey.startsWith('admin/')) {
+    // 路径类似于 'admin/something' 或 'admin/something.ext'
+    // 需要检查 'something' 是否需要附加 '.html'
+    const parts = objectKey.split('/');
+    const lastPart = parts[parts.length - 1];
+
+    // 如果 lastPart 存在且不包含 '.', 例如 'urls', 'stats', 'login', 'index'
+    if (lastPart && !lastPart.includes('.')) {
+      objectKey += '.html';
+    }
+    // 如果 lastPart 包含 '.', 例如 'script.js' 或 'urls.html', 则保持不变
+  }
+  // 对于其他顶级静态资源，如 'favicon.ico', objectKey 已经正确
+
+  console.log(`[DEBUG] Attempting to serve static asset from R2. Original Path: ${path}, Final ObjectKey: ${objectKey}`);
+
+  try {
+    const object = await env.STATIC_ASSETS.get(objectKey);
+
+    if (object === null) {
+      console.log(`[DEBUG] Asset not found in R2: ${objectKey}`);
+      return new Response('Not Found', { status: 404 });
+    }
+
+    console.log(`[DEBUG] Asset found in R2: ${objectKey}`);
+    const headers = new Headers();
+    
+    // 优先使用 R2 对象元数据中的 contentType，否则根据 objectKey 推断
+    let contentType = (object.httpMetadata && object.httpMetadata.contentType) ||
+                      (object.customMetadata && object.customMetadata.contentType) ||
+                      getMimeType(objectKey);
+    headers.set('Content-Type', contentType);
+
+    if (object.httpEtag) {
+      headers.set('ETag', object.httpEtag);
+    }
+    if (object.uploaded) {
+      headers.set('Last-Modified', object.uploaded.toUTCString());
+    }
+    
+    // 其他可能的缓存头部，例如 Cache-Control
+    // headers.set('Cache-Control', 'public, max-age=3600'); // 示例：缓存1小时
+
+    return new Response(object.body, { headers });
+  } catch (e) {
+    console.error(`[ERROR] Error fetching asset from R2 (${objectKey}):`, e);
+    return new Response('Error fetching static asset', { status: 500 });
+  }
+}
+
+
 // 应用对象
 const app = {
   // 处理请求的主函数
@@ -10,14 +99,12 @@ const app = {
     const url = new URL(request.url);
     const path = url.pathname;
 
-    // 新增日志：记录原始请求 URL 和解析后的路径
     console.log(`[DEBUG] Incoming request URL: ${request.url}`);
     console.log(`[DEBUG] Parsed path: ${path}`);
     console.log(`[DEBUG] Parsed hostname: ${url.hostname}`);
     
     // 处理 Cloudflare 特定路径
     if (path.startsWith('/cdn-cgi/')) {
-      // 处理 Cloudflare 的预加载和 RUM 请求
       if (path.startsWith('/cdn-cgi/speculation') || path.startsWith('/cdn-cgi/rum')) {
         return new Response('', {
           status: 200,
@@ -29,57 +116,35 @@ const app = {
       }
     }
     
-    // 创建数据库实例
     const db = new Database(env.DB);
-    
-    // 创建认证实例
     const auth = new Auth(db, env.JWT_SECRET);
 
+    // 静态资源处理逻辑 (使用 R2)
+    const staticAssetPaths = ['/favicon.ico', '/robots.txt']; // 可以扩展此列表
+    // 处理 /admin, /admin/* (非API), 以及其他顶层静态资源
+    if (path === '/admin' || path.startsWith('/admin/') || staticAssetPaths.includes(path)) {
+        if (path.startsWith('/admin/api/')) {
+             // API 调用，将由后续的 handleAdmin 处理
+        } else {
+            // 此处处理 /admin, /admin/, /admin/urls, /admin/urls.html, /admin/js/script.js 等
+            // 以及 /favicon.ico
+            console.log(`[DEBUG] Routing to serveStaticAssetFromR2 for path: ${path}`);
+            return serveStaticAssetFromR2(request, env, path);
+        }
+    }
+
     // 阻止通过特殊重定向域名 (e.g., *.xiaohongshu.com.pei.ee) 访问管理后台或API
-    // 使用与重定向逻辑相似的域名判断
-    const isPotentialSpecialDomain = url.hostname.endsWith('.pei.ee'); // Basic check, adjust if needed
+    const isPotentialSpecialDomain = url.hostname.endsWith('.pei.ee');
     const isAdminOrApiPath = path.startsWith('/admin') || path.startsWith('/api');
 
-    // 修改：完全允许通过特殊域名访问管理页面和API
     if (isPotentialSpecialDomain && isAdminOrApiPath) {
-        // More specific check based on lines 81-83:
         const isSpecialRedirectDomain = (url.hostname.includes('xiaohongshu') || url.hostname.includes('xhs'));
         if (isSpecialRedirectDomain) {
-            // 允许通过特殊域名访问管理页面和API
             console.log(`允许通过特殊域名 ${url.hostname} 访问路径 ${path}`);
         }
     }
 
-    // 处理静态资源 (由 Cloudflare Pages/Sites 自动处理，但我们需要确保 Worker 不会拦截)
-    // 检查是否是明确指向 /admin/js/ 的静态资源请求
-    if (path.startsWith('/admin/js/')) {
-      // 新增日志：确认进入静态资源处理分支
-      console.log(`[DEBUG] Attempting to serve static asset: ${path}`);
-      // 让 Cloudflare Pages/Sites 处理静态资源
-      // 注意: env.ASSETS.fetch 仅在 Pages/Sites 环境中可用
-      if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-        console.log(`[DEBUG] Passing static asset request ${path} to env.ASSETS.fetch`);
-        try {
-          // 尝试获取静态资源
-          // console.log('[DEBUG] Request object before env.ASSETS.fetch:', JSON.stringify(request, null, 2)); // 记录整个请求对象可能过于详细，暂时注释
-          const assetResponse = await env.ASSETS.fetch(request);
-          // 新增日志：记录 env.ASSETS.fetch 返回的响应状态和头部
-          console.log(`[DEBUG] env.ASSETS.fetch for ${path} responded with status: ${assetResponse.status}`);
-          console.log(`[DEBUG] env.ASSETS.fetch response headers for ${path}:`, JSON.stringify(Object.fromEntries(assetResponse.headers)));
-          return assetResponse;
-        } catch (e) {
-           console.error(`[DEBUG] env.ASSETS.fetch error for ${path}:`, e);
-           // 根据原始逻辑，如果 env.ASSETS.fetch 抛出错误，也应该返回一个错误响应
-           return new Response('Error fetching static asset', { status: 500 });
-        }
-      } else {
-        // 如果 ASSETS 不可用（例如本地开发环境），返回 404
-        console.error("[DEBUG] env.ASSETS is not available. Cannot serve static file:", path);
-        return new Response("Static asset not found. ASSETS binding missing.", { status: 404 });
-      }
-    }
-
-    // 首页处理 (保持不变)
+    // 首页处理
     if ((path === '/' || path === '') && !url.searchParams.has('key')) {
        return new Response(
         `<!DOCTYPE html>
@@ -95,7 +160,7 @@ const app = {
         </head>
         <body>
           <h1>URL重定向系统</h1>
-          <p>请使用特定key访问。管理员可<a href="/admin">登录管理面板</a>。</p>
+          <p>请使用特定key访问。管理员可<a href="/admin/">登录管理面板</a>。</p>
         </body>
         </html>`,
         {
@@ -106,23 +171,8 @@ const app = {
       );
     }
     
-    // 处理管理面板请求 (现在它会在静态资源检查之后)
-    if (path.startsWith('/admin')) {
-       // 确保不处理 /admin/js/ 等已知静态路径 (虽然前面的检查应该已经处理了)
-       if (path.startsWith('/admin/js/')) {
-         console.warn(`请求 ${path} 意外到达 /admin 路由处理程序`);
-         // 理论上不应到达这里，但为了安全，尝试让 Pages 处理或返回 404
-         if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-           try {
-             return await env.ASSETS.fetch(request);
-           } catch (e) {
-             console.error(`在 /admin 路由中尝试 env.ASSETS.fetch 处理 ${path} 时出错:`, e);
-             return new Response('Error fetching static asset in admin route', { status: 500 });
-           }
-         }
-         return new Response('Not Found (admin route conflict)', { status: 404 });
-       }
-       // 处理其他 /admin/* 路径
+    // 处理管理面板API请求
+    if (path.startsWith('/admin/api/')) {
        return handleAdmin(request, env, ctx, db, auth);
     }
     
@@ -132,7 +182,6 @@ const app = {
     }
     
     // 处理重定向
-    // 添加详细的调试日志
     console.log('处理重定向请求:', {
       url: request.url,
       hostname: url.hostname,
@@ -140,29 +189,23 @@ const app = {
       query: Object.fromEntries(url.searchParams)
     });
     
-    // 小红书特殊URL处理逻辑 - 针对 xiaohongshu.com.pei.ee 这样的格式
-    // 优先处理这种格式，提取查询参数中的key
     if (url.hostname.endsWith('pei.ee') && 
        (url.hostname.includes('xiaohongshu') || 
         url.hostname.includes('xhs'))) {
       console.log('检测到小红书特定格式URL: *.xiaohongshu.*.pei.ee 或 *.xhs.*.pei.ee');
       
-      // 直接从查询参数获取key
       const queryKey = url.searchParams.get('key');
       if (queryKey) {
         const key = queryKey;
         console.log('从小红书特定URL格式提取key:', key);
         
-        // 使用key进行重定向
         const redirect = await db.getRedirectByKey(key);
         
         if (redirect) {
-          // 记录访问
           const clientInfo = getClientInfo(request);
           await db.addVisit(redirect.id, clientInfo);
           
           console.log('找到重定向目标:', redirect.url);
-          // 重定向到目标URL
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
@@ -178,11 +221,10 @@ const app = {
         }
       } else {
         console.log('小红书特定URL格式中未找到key参数');
-        // 如果没有key参数，也应该返回一个明确的错误信息
         return new Response(
           JSON.stringify({ error: '未提供key参数' }),
           {
-            status: 400, // Bad Request
+            status: 400,
             headers: {
               'Content-Type': 'application/json;charset=UTF-8',
             },
@@ -190,26 +232,21 @@ const app = {
         );
       }
     }
-    // 处理其他小红书相关URL或一般的pei.ee域名
     else if (url.hostname.includes('xiaohongshu') || url.hostname.includes('pei.ee')) {
       console.log('检测到一般小红书相关URL格式');
       
-      // 始终优先从查询参数获取key
       const queryKey = url.searchParams.get('key');
       if (queryKey) {
         let key = queryKey;
         console.log('从小红书URL查询参数提取key:', key);
         
-        // 使用key进行重定向
         const redirect = await db.getRedirectByKey(key);
         
         if (redirect) {
-          // 记录访问
           const clientInfo = getClientInfo(request);
           await db.addVisit(redirect.id, clientInfo);
           
           console.log('找到重定向目标:', redirect.url);
-          // 重定向到目标URL
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
@@ -225,11 +262,10 @@ const app = {
         }
       } else {
         console.log('小红书URL中未找到key参数');
-        // 如果没有key参数，也应该返回一个明确的错误信息
         return new Response(
           JSON.stringify({ error: '未提供key参数' }),
           {
-            status: 400, // Bad Request
+            status: 400,
             headers: {
               'Content-Type': 'application/json;charset=UTF-8',
             },
@@ -237,14 +273,10 @@ const app = {
         );
       }
     } else {
-      // 按照原来的流程处理普通URL格式
-      // 首先从路径中获取key（移除开头的"/"）
       let key = path.substring(1);
       console.log('从路径提取key:', key);
       
-      // 如果路径中没有key，尝试从查询参数中获取
       if (!key || key === '') {
-        // 尝试从查询参数中获取key
         const queryKey = url.searchParams.get('key');
         if (queryKey) {
           key = queryKey;
@@ -252,20 +284,14 @@ const app = {
         }
       }
       
-      // 处理形如 xiaohongshu.com.pei.ee 的域名格式
-      // 检查主域名是否包含可能的重定向key
       if ((!key || key === '') && url.hostname) {
         console.log('尝试从域名格式中提取key, 主机名:', url.hostname);
-        // 尝试解析类似 xiaohongshu.com.pei.ee 格式的域名
         const hostParts = url.hostname.split('.');
         console.log('域名部分:', hostParts);
-        // 如果域名格式正确，查找可能的键
         if (hostParts.length >= 2) {
-          // 检查域名中是否包含我们的目标域名结构
           const domainCheck = hostParts.join('.');
           console.log('检查域名结构:', domainCheck);
           if (domainCheck.includes('.pei.ee')) {
-            // 从查询参数获取key
             const queryKey = url.searchParams.get('key');
             if (queryKey) {
               key = queryKey;
@@ -277,17 +303,14 @@ const app = {
       
       console.log('最终使用的key:', key);
       
-      // 使用key进行重定向
       if (key) {
         const redirect = await db.getRedirectByKey(key);
         
         if (redirect) {
-          // 记录访问
           const clientInfo = getClientInfo(request);
           await db.addVisit(redirect.id, clientInfo);
           
           console.log('找到重定向目标:', redirect.url);
-          // 重定向到目标URL
           return Response.redirect(redirect.url, 302);
         } else {
           console.log('未找到与key匹配的重定向:', key);
@@ -304,10 +327,8 @@ const app = {
       }
     }
     
-    // 如果执行到这里，说明没有有效的key或者其他处理逻辑没有匹配
-    // 默认的404响应
     return new Response(
-      JSON.stringify({ error: '请求的资源未找到或无效' }), // 更通用的错误信息
+      JSON.stringify({ error: '请求的资源未找到或无效' }),
       {
         status: 404,
         headers: {
@@ -317,27 +338,16 @@ const app = {
     );
   },
 
-  /**
-   * 处理 Cloudflare Cron Triggers 调度事件
-   * @param {ScheduledEvent} event - 调度事件对象
-   * @param {object} env - 环境变量
-   * @param {ExecutionContext} ctx - 执行上下文
-   */
   async scheduled(event, env, ctx) {
     console.log(`Cron Trigger 事件触发: ${event.cron}`);
     
-    // 实例化数据库
     const db = new Database(env.DB);
 
-    // 计算昨天的日期 (YYYY-MM-DD)
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     const dateToAggregate = yesterday.toISOString().split('T')[0];
 
-    // 执行聚合任务
     try {
-      // 使用 waitUntil 确保聚合任务在 Worker 返回响应前完成
-      // 或者至少有足够的时间运行
       ctx.waitUntil(
         (async () => {
           const result = await db.aggregateDailyVisits(dateToAggregate);
@@ -355,14 +365,12 @@ const app = {
   }
 };
 
-// 处理API请求
+// 处理API请求 (这个函数保持不变，但调用它的地方可能调整了)
 async function handleApi(request, env, db, auth) {
   const url = new URL(request.url);
   const path = url.pathname;
   
-  // 检查API请求类型
   if (path === '/api/health') {
-    // 健康检查端点
     return new Response(
       JSON.stringify({ status: 'ok' }),
       {
@@ -373,29 +381,31 @@ async function handleApi(request, env, db, auth) {
     );
   }
   
-  // 其他API端点需要身份验证
-  const user = auth.requireAuth(request);
-  if (!user) {
-    return new Response(
-      JSON.stringify({ error: 'Unauthorized' }),
-      {
-        status: 401,
-        headers: {
-          'Content-Type': 'application/json',
-        },
+  // 其他API端点需要身份验证 (注意: /api/login 是特例)
+  if (path !== '/api/login') { // login 接口本身不需要预先验证token
+      const user = auth.requireAuth(request);
+      if (!user) {
+        return new Response(
+          JSON.stringify({ error: 'Unauthorized' }),
+          {
+            status: 401,
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          }
+        );
       }
-    );
   }
   
-  // 登录验证
   if (path === '/api/login' && request.method === 'POST') {
     try {
       const { username, password } = await request.json();
-      const token = await auth.login(username, password, env);
+      // 注意：auth.login 内部会处理密码验证和JWT生成
+      const token = await auth.login(username, password, env); 
       
       if (token) {
         return new Response(
-          JSON.stringify({ token, username }),
+          JSON.stringify({ token, username }), // 返回 token 和 username
           {
             headers: {
               'Content-Type': 'application/json',
@@ -414,10 +424,11 @@ async function handleApi(request, env, db, auth) {
         }
       );
     } catch (e) {
+      console.error("Login API error:", e);
       return new Response(
-        JSON.stringify({ error: '无效的请求' }),
+        JSON.stringify({ error: '无效的请求或服务器内部错误' }),
         {
-          status: 400,
+          status: e.message === 'Invalid JSON' ? 400 : 500,
           headers: {
             'Content-Type': 'application/json',
           },
@@ -426,7 +437,7 @@ async function handleApi(request, env, db, auth) {
     }
   }
   
-  // 404 Not Found
+  // 如果没有匹配的 API 路由
   return new Response(
     JSON.stringify({ error: 'API Not Found' }),
     {
@@ -438,5 +449,4 @@ async function handleApi(request, env, db, auth) {
   );
 }
 
-// 导出Worker
 export default app;
