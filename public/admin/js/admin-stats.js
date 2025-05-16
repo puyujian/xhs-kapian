@@ -2,11 +2,22 @@ let timeSeriesChart = null; // 用于存储 Chart.js 实例
 let topUrlsChartInstance = null; // 用于存储最常访问 URL 图表的 Chart.js 实例
 let currentPeriodDays = 7; // 默认时间范围
 
+// DOM 元素缓存
+const statsErrorElement = document.getElementById('stats-error');
+const statsLoadingElement = document.getElementById('stats-loading');
+const statsContentElement = document.getElementById('stats-content');
+const summaryTotalVisitsElement = document.getElementById('summary-total-visits');
+const summaryActiveRedirectsElement = document.getElementById('summary-active-redirects');
+const summaryTotalRedirectsElement = document.getElementById('summary-total-redirects');
+const visitsTimeseriesChartElement = document.getElementById('visits-timeseries-chart');
+const statsPeriodSelector = document.getElementById('stats-period');
+
+
 // API 请求辅助函数
 async function fetchStatsData(endpoint, params = {}, useDateRange = false, startDate = null, endDate = null) {
   const token = localStorage.getItem('token');
   if (!token) {
-    console.error('认证令牌未找到');
+    // console.error('认证令牌未找到'); // Keep this as it's a critical error, but for now, as per instruction, removing logs.
     window.location.href = '/admin/login';
     return null;
   }
@@ -28,14 +39,14 @@ async function fetchStatsData(endpoint, params = {}, useDateRange = false, start
 
     if (!response.ok) {
       if (response.status === 401) {
-        console.warn('认证失败，重定向到登录页面');
+        // console.warn('认证失败，重定向到登录页面');
         window.location.href = '/admin/login'; // 重定向到登录
         return null;
       }
       // 处理其他错误状态码
       const errorData = await response.json().catch(() => ({ error: 'API 请求失败，状态码: ' + response.status }));
       const errorMessage = errorData.error || ('请求 ' + endpoint + ' 失败，状态码: ' + response.status);
-      console.error('API Error:', errorMessage, 'Endpoint:', endpoint);
+      console.error('API Error:', errorMessage, 'Endpoint:', endpoint); // Keep critical API errors
       showError(errorMessage); // 调用 showError
       return null; // 返回 null
     }
@@ -44,7 +55,7 @@ async function fetchStatsData(endpoint, params = {}, useDateRange = false, start
     // 修改: 使用字符串拼接而不是模板字符串
     const errorEndpointMsg = '请求 ' + endpoint + ' 时发生意外错误:';
     const errorLoadingMsg = '加载数据出错: ' + error.message;
-    console.error(errorEndpointMsg, error);
+    console.error(errorEndpointMsg, error); // Keep critical network/parse errors
     showError(errorLoadingMsg);
     return null;
   }
@@ -52,19 +63,17 @@ async function fetchStatsData(endpoint, params = {}, useDateRange = false, start
 
 // 显示错误消息
 function showError(message) {
-  const errorElement = document.getElementById('stats-error');
-  const loadingElement = document.getElementById('stats-loading');
-  const contentElement = document.getElementById('stats-content');
-  if (errorElement) {
-    errorElement.textContent = message;
-    errorElement.style.display = 'block';
+  if (statsErrorElement) {
+    statsErrorElement.textContent = message;
+    statsErrorElement.classList.remove('is-hidden');
   }
-  if (loadingElement) loadingElement.style.display = 'none';
-  if (contentElement) contentElement.style.display = 'none';
+  if (statsLoadingElement) statsLoadingElement.classList.add('is-hidden');
+  if (statsContentElement) statsContentElement.classList.add('is-hidden');
 }
 
 // 显示加载状态
 function showLoading() {
+<<<<<<< HEAD
   const errorElement = document.getElementById('stats-error');
   const loadingElement = document.getElementById('stats-loading');
   const contentElement = document.getElementById('stats-content');
@@ -78,10 +87,16 @@ function showLoading() {
   if (topUrlsChartLoading) topUrlsChartLoading.style.display = 'block';
   if (topUrlsChartCanvas) topUrlsChartCanvas.style.display = 'none';
   if (topUrlsChartEmpty) topUrlsChartEmpty.style.display = 'none';
+=======
+  if (statsErrorElement) statsErrorElement.classList.add('is-hidden');
+  if (statsLoadingElement) statsLoadingElement.classList.remove('is-hidden');
+  if (statsContentElement) statsContentElement.classList.add('is-hidden');
+>>>>>>> 1c33e2e4c55d9477bb880777bce701499d092739
 }
 
 // 显示内容
 function showContent() {
+<<<<<<< HEAD
   const errorElement = document.getElementById('stats-error');
   const loadingElement = document.getElementById('stats-loading');
   const contentElement = document.getElementById('stats-content');
@@ -89,26 +104,32 @@ function showContent() {
   if (errorElement) errorElement.style.display = 'none';
   if (loadingElement) loadingElement.style.display = 'none';
   if (contentElement) contentElement.style.display = 'block';
+=======
+  if (statsErrorElement) statsErrorElement.classList.add('is-hidden');
+  if (statsLoadingElement) statsLoadingElement.classList.add('is-hidden');
+  if (statsContentElement) statsContentElement.classList.remove('is-hidden');
+>>>>>>> 1c33e2e4c55d9477bb880777bce701499d092739
 }
 
 // 更新摘要卡片
 function updateSummaryCards(summaryData) {
   if (!summaryData || !summaryData.summary) {
-    console.warn('无效的摘要数据', summaryData);
+    // console.warn('无效的摘要数据', summaryData);
     // 可以设置默认值或显示错误
-    document.getElementById('summary-total-visits').textContent = 'N/A';
-    document.getElementById('summary-active-redirects').textContent = 'N/A';
-    document.getElementById('summary-total-redirects').textContent = 'N/A';
+    if (summaryTotalVisitsElement) summaryTotalVisitsElement.textContent = 'N/A';
+    if (summaryActiveRedirectsElement) summaryActiveRedirectsElement.textContent = 'N/A';
+    if (summaryTotalRedirectsElement) summaryTotalRedirectsElement.textContent = 'N/A';
     return;
   }
   const summary = summaryData.summary;
-  document.getElementById('summary-total-visits').textContent = summary.totalVisits || 0;
-  document.getElementById('summary-active-redirects').textContent = summary.activeRedirects || 0;
-  document.getElementById('summary-total-redirects').textContent = summary.totalRedirects || 0;
+  if (summaryTotalVisitsElement) summaryTotalVisitsElement.textContent = summary.totalVisits || 0;
+  if (summaryActiveRedirectsElement) summaryActiveRedirectsElement.textContent = summary.activeRedirects || 0;
+  if (summaryTotalRedirectsElement) summaryTotalRedirectsElement.textContent = summary.totalRedirects || 0;
 }
 
 // 渲染时间序列图表
 function renderTimeSeriesChart(timeSeriesData) {
+<<<<<<< HEAD
   const canvasElement = document.getElementById('visits-timeseries-chart');
   const loadingElement = document.getElementById('timeSeriesChart-loading');
   const emptyElement = document.getElementById('timeSeriesChart-empty');
@@ -142,6 +163,19 @@ function renderTimeSeriesChart(timeSeriesData) {
     const date = new Date(item.date);
     return `${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
   });
+=======
+  if (!timeSeriesData || !timeSeriesData.timeseries) {
+    // console.warn('无效的时间序列数据', timeSeriesData);
+    // 可以显示提示信息
+    return;
+  }
+  if (!visitsTimeseriesChartElement) {
+    console.error('找不到图表元素: visits-timeseries-chart');
+    return;
+  }
+  const ctx = visitsTimeseriesChartElement.getContext('2d');
+  const labels = timeSeriesData.timeseries.map(item => item.date);
+>>>>>>> 1c33e2e4c55d9477bb880777bce701499d092739
   const dataCounts = timeSeriesData.timeseries.map(item => item.count);
 
   if (timeSeriesChart) {
@@ -382,15 +416,16 @@ function populateTopList(listId, emptyId, tableId, data, columns) {
   listBody.innerHTML = ''; // 清空旧数据
 
   if (!data || data.length === 0) {
-    tableElement.style.display = 'none';
-    emptyMessage.style.display = 'block';
+    tableElement.classList.add('is-hidden');
+    emptyMessage.classList.remove('is-hidden');
   } else {
-    tableElement.style.display = 'table';
-    emptyMessage.style.display = 'none';
+    tableElement.classList.remove('is-hidden');
+    emptyMessage.classList.add('is-hidden');
+    const fragment = document.createDocumentFragment();
     data.forEach(item => {
-      const row = listBody.insertRow();
+      const row = document.createElement('tr'); // 使用 createElement 创建 tr
       columns.forEach(col => {
-        const cell = row.insertCell();
+        const cell = document.createElement('td'); // 使用 createElement 创建 td
         let value = item[col.key] !== null && item[col.key] !== undefined ? item[col.key] : 'N/A';
         // 特殊处理 URL 截断
         if (col.truncate && typeof value === 'string' && value.length > col.truncate) {
@@ -402,23 +437,26 @@ function populateTopList(listId, emptyId, tableId, data, columns) {
         if (col.align) {
           cell.style.textAlign = col.align;
         }
+        row.appendChild(cell);
       });
+      fragment.appendChild(row);
     });
+    listBody.appendChild(fragment);
   }
 }
 
 // 加载所有统计数据 (按天数)
 async function loadAllStats(days) {
   // 修改: 使用字符串拼接而不是模板字符串
-  const loadingMsg = '开始加载 ' + days + ' 天的统计数据...';
-  console.log(loadingMsg);
+  // const loadingMsg = '开始加载 ' + days + ' 天的统计数据...';
+  // console.log(loadingMsg);
   showLoading();
   currentPeriodDays = days; // 更新当前时间范围
 
   const params = { days };
   const limitParams = { days, limit: 10 }; // Top N 列表参数
 
-  console.log('Initiating Promise.all to fetch stats data...'); // 添加日志
+  // console.log('Initiating Promise.all to fetch stats data...'); // 添加日志
   // 并行获取所有数据
   const [summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData] = await Promise.all([
     fetchStatsData('/admin/api/stats/summary', params),
@@ -430,24 +468,25 @@ async function loadAllStats(days) {
   ]);
   
   // 添加日志: 打印接收到的数据
-  console.log('Promise.all finished. Received data:', { summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData });
+  // console.log('Promise.all finished. Received data:', { summaryData, timeSeriesData, topUrlsData, topCountriesData, topReferersData, topUserAgentsData });
 
   // 检查是否有任何请求失败 (fetchStatsData 内部会调用 showError)
   if (!summaryData || !timeSeriesData || !topUrlsData || !topCountriesData || !topReferersData || !topUserAgentsData) {
-    console.error("部分或全部统计数据加载失败。");
+    console.error("部分或全部统计数据加载失败。"); // Keep critical error
     // showError 已经在 fetchStatsData 中调用，这里不再重复调用
-    return; 
+    return;
   }
   
-  console.log("所有统计数据加载成功");
+  // console.log("所有统计数据加载成功");
 
   // 更新 UI
-  console.log('Updating summary cards...'); // 添加日志
+  // console.log('Updating summary cards...'); // 添加日志
   updateSummaryCards(summaryData);
-  console.log('Summary cards updated.'); // 添加日志
+  // console.log('Summary cards updated.'); // 添加日志
 
-  console.log('Rendering time series chart...'); // 添加日志
+  // console.log('Rendering time series chart...'); // 添加日志
   renderTimeSeriesChart(timeSeriesData);
+<<<<<<< HEAD
   console.log('Time series chart rendered.'); // 添加日志
 
   console.log('Rendering Top URLs chart...'); // 添加日志
@@ -462,30 +501,41 @@ async function loadAllStats(days) {
   //   { key: 'total_visits', align: 'right' }
   // ]);
   // console.log('Top URLs list populated.');
+=======
+  // console.log('Time series chart rendered.'); // 添加日志
   
-  console.log('Populating top referers list...'); // 添加日志
+  // console.log('Populating top URLs list...'); // 添加日志
+  populateTopList('top-urls-list', 'top-urls-empty', 'top-urls-table', topUrlsData?.topUrls || [], [
+    { key: 'key', truncate: 30 },
+    { key: 'url', truncate: 50 },
+    { key: 'total_visits', align: 'right' }
+  ]);
+  // console.log('Top URLs list populated.'); // 添加日志
+>>>>>>> 1c33e2e4c55d9477bb880777bce701499d092739
+  
+  // console.log('Populating top referers list...'); // 添加日志
   populateTopList('top-referers-list', 'top-referers-empty', 'top-referers-table', topReferersData?.topReferers || [], [
-    { key: 'referer_domain', truncate: 50 }, 
+    { key: 'referer_domain', truncate: 50 },
     { key: 'count', align: 'right' }
   ]);
-  console.log('Top referers list populated.'); // 添加日志
+  // console.log('Top referers list populated.'); // 添加日志
   
-  console.log('Populating top countries list...'); // 添加日志
+  // console.log('Populating top countries list...'); // 添加日志
   populateTopList('top-countries-list', 'top-countries-empty', 'top-countries-table', topCountriesData?.topCountries || [], [
-    { key: 'country' }, 
+    { key: 'country' },
     { key: 'count', align: 'right' }
   ]);
-  console.log('Top countries list populated.'); // 添加日志
+  // console.log('Top countries list populated.'); // 添加日志
   
-  console.log('Populating top user agents list...'); // 添加日志
+  // console.log('Populating top user agents list...'); // 添加日志
   populateTopList('top-user-agents-list', 'top-user-agents-empty', 'top-user-agents-table', topUserAgentsData?.topUserAgents || [], [
-    { key: 'browser' }, 
-    { key: 'os' }, 
+    { key: 'browser' },
+    { key: 'os' },
     { key: 'count', align: 'right' }
   ]);
-  console.log('Top user agents list populated.'); // 添加日志
+  // console.log('Top user agents list populated.'); // 添加日志
 
-  console.log('All UI updates complete. Calling showContent...'); // 添加日志
+  // console.log('All UI updates complete. Calling showContent...'); // 添加日志
   showContent(); // 显示内容区域
 }
 
@@ -555,9 +605,8 @@ async function loadStatsByDateRange(startDate, endDate) {
 // 初始化
 document.addEventListener('DOMContentLoaded', () => {
   // 获取周期选择器并添加事件监听器
-  const periodSelector = document.getElementById('stats-period');
-  if (periodSelector) {
-    periodSelector.addEventListener('change', function() {
+  if (statsPeriodSelector) {
+    statsPeriodSelector.addEventListener('change', function() {
       const days = parseInt(this.value, 10);
       // 清空日期选择器的值，如果通过周期选择器加载
       document.getElementById('startDate').value = '';
@@ -565,8 +614,13 @@ document.addEventListener('DOMContentLoaded', () => {
       loadAllStats(days);
     });
     
+<<<<<<< HEAD
     // 初始加载 (默认按周期)
     const initialDays = parseInt(periodSelector.value, 10);
+=======
+    // 初始加载
+    const initialDays = parseInt(statsPeriodSelector.value, 10);
+>>>>>>> 1c33e2e4c55d9477bb880777bce701499d092739
     loadAllStats(initialDays);
   } else {
     console.warn('找不到周期选择器元素 #stats-period。如果不需要周期选择，请忽略此消息。');

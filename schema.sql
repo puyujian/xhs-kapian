@@ -4,6 +4,8 @@ CREATE TABLE redirects (
   key TEXT UNIQUE NOT NULL,
   url TEXT NOT NULL,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  visit_count INTEGER DEFAULT 0 NOT NULL,
+  last_visit_at DATETIME,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -40,5 +42,11 @@ CREATE TABLE users (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
-INSERT INTO users (username, password_hash) 
-VALUES ('admin', '$2a$10$zXEv7BxnJ2oNMFYoV9OGLu5oNE9XJqeS8CdJxMbC5vvNBYPYjxrau'); 
+-- Indexes
+CREATE INDEX idx_redirects_created_at ON redirects(created_at);
+CREATE INDEX idx_visits_redirect_id ON visits(redirect_id);
+CREATE INDEX idx_visits_timestamp ON visits(timestamp);
+CREATE INDEX idx_daily_visits_summary_date ON daily_visits_summary(date);
+
+INSERT INTO users (username, password_hash)
+VALUES ('admin', '$2a$10$zXEv7BxnJ2oNMFYoV9OGLu5oNE9XJqeS8CdJxMbC5vvNBYPYjxrau');
