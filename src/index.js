@@ -9,6 +9,11 @@ const app = {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
+
+    // 新增日志：记录原始请求 URL 和解析后的路径
+    console.log(`[DEBUG] Incoming request URL: ${request.url}`);
+    console.log(`[DEBUG] Parsed path: ${path}`);
+    console.log(`[DEBUG] Parsed hostname: ${url.hostname}`);
     
     // 处理 Cloudflare 特定路径
     if (path.startsWith('/cdn-cgi/')) {
@@ -48,21 +53,28 @@ const app = {
     // 处理静态资源 (由 Cloudflare Pages/Sites 自动处理，但我们需要确保 Worker 不会拦截)
     // 检查是否是明确指向 /admin/js/ 的静态资源请求
     if (path.startsWith('/admin/js/')) {
+      // 新增日志：确认进入静态资源处理分支
+      console.log(`[DEBUG] Attempting to serve static asset: ${path}`);
       // 让 Cloudflare Pages/Sites 处理静态资源
       // 注意: env.ASSETS.fetch 仅在 Pages/Sites 环境中可用
       if (env.ASSETS && typeof env.ASSETS.fetch === 'function') {
-        console.log(`将静态资源请求 ${path} 传递给 env.ASSETS.fetch`);
+        console.log(`[DEBUG] Passing static asset request ${path} to env.ASSETS.fetch`);
         try {
           // 尝试获取静态资源
-          return await env.ASSETS.fetch(request);
+          // console.log('[DEBUG] Request object before env.ASSETS.fetch:', JSON.stringify(request, null, 2)); // 记录整个请求对象可能过于详细，暂时注释
+          const assetResponse = await env.ASSETS.fetch(request);
+          // 新增日志：记录 env.ASSETS.fetch 返回的响应状态和头部
+          console.log(`[DEBUG] env.ASSETS.fetch for ${path} responded with status: ${assetResponse.status}`);
+          console.log(`[DEBUG] env.ASSETS.fetch response headers for ${path}:`, JSON.stringify(Object.fromEntries(assetResponse.headers)));
+          return assetResponse;
         } catch (e) {
-           console.error(`env.ASSETS.fetch 处理 ${path} 时出错:`, e);
+           console.error(`[DEBUG] env.ASSETS.fetch error for ${path}:`, e);
            // 根据原始逻辑，如果 env.ASSETS.fetch 抛出错误，也应该返回一个错误响应
            return new Response('Error fetching static asset', { status: 500 });
         }
       } else {
         // 如果 ASSETS 不可用（例如本地开发环境），返回 404
-        console.error("env.ASSETS is not available. Cannot serve static file:", path);
+        console.error("[DEBUG] env.ASSETS is not available. Cannot serve static file:", path);
         return new Response("Static asset not found. ASSETS binding missing.", { status: 404 });
       }
     }
