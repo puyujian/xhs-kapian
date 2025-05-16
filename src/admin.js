@@ -1455,7 +1455,7 @@ function getStatsPage() {
 
   // 引入 Chart.js CDN和外部统计JS文件
   const chartJsScript = '<script src="https://cdn.jsdelivr.net/npm/chart.js@3.7.1/dist/chart.min.js"></script>';
-  const statsScript = '<script src="/admin/js/admin-stats.js"></script>';
+  const statsScript = '<script src="/js/admin-stats.js"></script>';
   
   // 添加手动聚合的JavaScript
   const aggregateScript = `
