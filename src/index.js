@@ -10,8 +10,7 @@ const app = {
     const url = new URL(request.url);
     const path = url.pathname;
     
-    // 处理 Cloudflare 特定路径 (注释掉，让 Pages/Sites 平台处理)
-    /*
+    // 处理 Cloudflare 特定路径
     if (path.startsWith('/cdn-cgi/')) {
       // 处理 Cloudflare 的预加载和 RUM 请求
       if (path.startsWith('/cdn-cgi/speculation') || path.startsWith('/cdn-cgi/rum')) {
@@ -24,7 +23,6 @@ const app = {
         });
       }
     }
-    */
     
     // 创建数据库实例
     const db = new Database(env.DB);
@@ -56,23 +54,16 @@ const app = {
         console.log(`将静态资源请求 ${path} 传递给 env.ASSETS.fetch`);
         try {
           // 尝试获取静态资源
-          const assetResponse = await env.ASSETS.fetch(request);
-          // 检查资源是否存在
-          if (assetResponse.status === 404) {
-             console.warn(`env.ASSETS.fetch 未找到资源: ${path}`);
-             // 如果平台找不到，我们也不应该继续处理，返回404
-             return new Response('Static asset not found by platform', { status: 404 });
-          }
-          // 返回平台找到的资源
-          return assetResponse;
+          return await env.ASSETS.fetch(request);
         } catch (e) {
            console.error(`env.ASSETS.fetch 处理 ${path} 时出错:`, e);
+           // 根据原始逻辑，如果 env.ASSETS.fetch 抛出错误，也应该返回一个错误响应
            return new Response('Error fetching static asset', { status: 500 });
         }
       } else {
         // 如果 ASSETS 不可用（例如本地开发环境），返回 404
-        console.warn(`env.ASSETS.fetch 不可用，无法提供静态资源 ${path}`);
-        return new Response('Not Found (env.ASSETS unavailable)', { status: 404 });
+        console.error("env.ASSETS is not available. Cannot serve static file:", path);
+        return new Response("Static asset not found. ASSETS binding missing.", { status: 404 });
       }
     }
 
@@ -436,4 +427,4 @@ async function handleApi(request, env, db, auth) {
 }
 
 // 导出Worker
-export default app; 
+export default app;
