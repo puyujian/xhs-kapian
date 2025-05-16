@@ -4,210 +4,57 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>URL管理 - URL重定向系统</title>
-  <style>
-    body {
-      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-      line-height: 1.6;      color: #333;      max-width: 1200px;      margin: 0 auto;
-      padding: 20px;
-      background-color: #f5f5f5;
-    }
-    header {
-      background-color: #fff;
-      padding: 20px;
-      border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);      margin-bottom: 20px;    }    h1 {      color: #2c3e50;
-      margin: 0;
-    }
-    .nav {
-      margin-top: 15px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 15px;    }    .nav a {      color: #3498db;      text-decoration: none;
-      padding: 5px 10px;
-      border-radius: 3px;
-      transition: background-color 0.3s;
-    }
-    .nav a:hover {
-      background-color: #eaf2f8;
-    }
-    .nav a.active {
-      background-color: #3498db;
-      color: white;
-    }
-    .main-content {
-      background-color: #fff;
-      padding: 25px;
-      border-radius: 5px;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);    }    .form-group {
-      margin-bottom: 15px;
-    }
-    label {
-      display: block;
-      margin-bottom: 5px;
-      font-weight: 500;
-    }    input[type="text"],
-    input[type="password"],
-    input[type="url"] {
-      width: 100%;
-      padding: 10px;
-      border: 1px solid #ddd;
-      border-radius: 3px;
-      font-size: 16px;
-      box-sizing: border-box;
-    }
-    button {
-      background-color: #3498db;
-      color: white;
-      border: none;
-      padding: 10px 15px;
-      border-radius: 3px;
-      cursor: pointer;
-      font-size: 16px;
-      transition: background-color 0.3s;
-    }
-    button:hover {
-      background-color: #2980b9;
-    }
-    button.delete-btn {
-        background-color: #e74c3c;
-    }
-    button.delete-btn:hover {
-        background-color: #c0392b;
-    }
-    button:disabled {
-        background-color: #bdc3c7;
-        cursor: not-allowed;
-    }
-    table {
-      width: 100%;
-      border-collapse: collapse;
-    }
-    th, td {
-      padding: 12px 15px;
-      text-align: left;
-      border-bottom: 1px solid #ddd;
-      word-break: break-all; /* Prevent long URLs from breaking layout */
-    }
-    th {      background-color: #f8f9fa;
-    }
-    tr:hover {
-      background-color: #f1f1f1;
-    }
-    .error {
-      color: #e74c3c;      margin-top: 5px;    }    .success {
-      color: #2ecc71;
-      margin-top: 5px;
-    }
-    #error-message {
-        padding: 10px;
-        background-color: #ffecec;
-        border: 1px solid #f5c6cb;
-        border-radius: 4px;
-        margin-bottom: 15px;
-    }
-    #form-message {
-        padding: 5px;
-        border-radius: 3px;
-        margin-top: 10px;
-    }
-    #form-message.error {
-        background-color: #ffecec;
-        border: 1px solid #f5c6cb;
-    }
-     #form-message.success {
-        background-color: #eafaf1;
-        border: 1px solid #c3e6cb;
-    }
-    @media (max-width: 768px) {
-      .nav {
-        flex-direction: column;
-        gap: 5px;
-      }
-      th, td {
-        padding: 8px 10px;
-      }
-      /* Improve table display on small screens */
-      table, thead, tbody, th, td, tr {
-        display: block;
-      }
-      thead tr {
-        position: absolute;
-        top: -9999px;
-        left: -9999px;
-      }
-      tr { border: 1px solid #ccc; margin-bottom: 10px; }
-      td {
-        border: none;
-        border-bottom: 1px solid #eee;
-        position: relative;
-        padding-left: 50%;
-        white-space: normal;
-        text-align:left;
-      }
-      td:before {
-        position: absolute;
-        top: 6px;
-        left: 6px;
-        width: 45%;
-        padding-right: 10px;
-        white-space: nowrap;
-        text-align:left;
-        font-weight: bold;
-        content: attr(data-label); /* Use data-label for header */
-      }
-    }
-  </style>
+  <link rel="stylesheet" href="css/admin-style.css">
 </head>
 <body>
   <header>
-    <h1>URL重定向系统</h1>
-    <div class="nav">
-      <a href="/admin/">首页</a>
+    <h1>URL重定向系统 - 管理后台</h1>
+    <nav class="nav">
+      <a href="/admin/index.html">首页</a>
       <a href="/admin/urls.html" class="active">URL管理</a>
       <a href="/admin/stats.html">访问统计</a>
       <a href="/" target="_blank">访问前台</a>
-      <a href="#" id="logout" style="margin-left: auto;">退出登录</a>
-    </div>
+      <a href="#" id="logout">退出登录</a>
+    </nav>
   </header>
 
   <div class="main-content">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-      <h2 style="margin: 0;">URL管理</h2>
+      <h2>URL管理</h2>
       <button id="add-url-btn">添加新URL</button>
     </div>
 
-    <div id="url-form-container" style="display: none; background-color: #f8f9fa; padding: 20px; margin-bottom: 20px; border-radius: 5px;">
+    <div id="url-form-container" style="display: none;">
       <h3 id="form-title">添加新URL</h3>
       <form id="url-form">
         <input type="hidden" id="url-id" value="">
         <div class="form-group">
           <label for="url-key">短链接键值 (key)</label>
           <input type="text" id="url-key" name="key" required placeholder="例如: abc123">
-          <div id="key-error" class="error"></div>
+          <div id="key-error" class="error-message" style="display: none;"></div>
         </div>
         <div class="form-group">
           <label for="url-target">目标URL</label>
           <input type="url" id="url-target" name="url" required placeholder="例如: https://example.com/some/long/path">
-          <div id="url-error" class="error"></div>
+          <div id="url-error" class="error-message" style="display: none;"></div>
         </div>
         <div style="display: flex; gap: 10px;">
           <button type="submit" id="save-url-btn">保存</button>
-          <button type="button" id="cancel-url-btn">取消</button>
+          <button type="button" id="cancel-url-btn" class="cancel-btn">取消</button>
         </div>
-        <div id="form-message" style="margin-top: 10px;"></div>
+        <div id="form-message" class="info-message" style="margin-top: 10px; display: none;"></div>
       </form>
     </div>
 
     <div id="urls-table-container">
       <div id="loading-message">正在加载URL数据...</div>
-      <div id="error-message" style="display: none; color: red;"></div>
+      <div id="error-message" class="error-message" style="display: none;"></div>
       <table id="urls-table" style="display: none;">
         <thead>
           <tr>
             <th>短链接</th>
             <th>目标URL</th>
             <th>创建时间</th>
-            <!-- <th>访问次数</th> --> <!-- Temporarily removed as API doesn't provide it directly -->
             <th>操作</th>
           </tr>
         </thead>
@@ -215,10 +62,10 @@
           <!-- 数据将通过JavaScript动态加载 -->
         </tbody>
       </table>
-      <div id="no-urls-message" style="display: none; text-align: center; padding: 20px;">
+      <div id="no-urls-message" style="display: none;">
         没有找到任何URL记录。点击"添加新URL"按钮创建第一个重定向链接。
       </div>
-      <button id="retry-load-btn" style="display: none; margin-top: 10px;">重试加载</button>
+      <button id="retry-load-btn" style="display: none;">重试加载</button>
     </div>
   </div>
 

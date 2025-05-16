@@ -175,47 +175,89 @@ async function handleAdminApi(request, env, db, auth) {
 
   // 获取全局统计摘要
   if (path === '/admin/api/stats/summary' && request.method === 'GET') {
-    const days = parseInt(params.get('days') || '1', 10); // 默认为 1 天
-    const summary = await db.getStatsSummary(days);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let summary;
+    if (startDate && endDate) {
+      summary = await db.getStatsSummary(null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '1', 10); // 默认为 1 天
+      summary = await db.getStatsSummary(days);
+    }
     return jsonResponse({ summary });
   }
 
   // 获取时间序列统计
   if (path === '/admin/api/stats/timeseries' && request.method === 'GET') {
-    const days = parseInt(params.get('days') || '7', 10); // 默认为 7 天
-    const timeseries = await db.getTimeSeriesStats(days);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let timeseries;
+    if (startDate && endDate) {
+      timeseries = await db.getTimeSeriesStats(null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '7', 10); // 默认为 7 天
+      timeseries = await db.getTimeSeriesStats(days);
+    }
     return jsonResponse({ timeseries });
   }
   
   // 获取 Top URLs (替代原 /admin/api/stats)
   if (path === '/admin/api/stats/top-urls' && request.method === 'GET') {
-    const limit = parseInt(params.get('limit') || '10', 10); // 默认 Top 10
-    const days = parseInt(params.get('days') || '7', 10); // 默认最近 7 天
-    const topUrls = await db.getTopUrlsByVisit(limit, days);
+    const limit = parseInt(params.get('limit') || '10', 10);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let topUrls;
+    if (startDate && endDate) {
+      topUrls = await db.getTopUrlsByVisit(limit, null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '7', 10); // 默认最近 7 天
+      topUrls = await db.getTopUrlsByVisit(limit, days);
+    }
     return jsonResponse({ topUrls });
   }
 
   // 获取 Top 国家 (替代原 /admin/api/stats/countries)
   if (path === '/admin/api/stats/top-countries' && request.method === 'GET') {
     const limit = parseInt(params.get('limit') || '10', 10);
-    const days = parseInt(params.get('days') || '7', 10);
-    const topCountries = await db.getTopCountries(limit, days);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let topCountries;
+    if (startDate && endDate) {
+      topCountries = await db.getTopCountries(limit, null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '7', 10);
+      topCountries = await db.getTopCountries(limit, days);
+    }
     return jsonResponse({ topCountries });
   }
 
   // 获取 Top Referers
   if (path === '/admin/api/stats/top-referers' && request.method === 'GET') {
     const limit = parseInt(params.get('limit') || '10', 10);
-    const days = parseInt(params.get('days') || '7', 10);
-    const topReferers = await db.getTopReferers(limit, days);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let topReferers;
+    if (startDate && endDate) {
+      topReferers = await db.getTopReferers(limit, null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '7', 10);
+      topReferers = await db.getTopReferers(limit, days);
+    }
     return jsonResponse({ topReferers });
   }
 
   // 获取 Top User Agents
   if (path === '/admin/api/stats/top-user-agents' && request.method === 'GET') {
     const limit = parseInt(params.get('limit') || '10', 10);
-    const days = parseInt(params.get('days') || '7', 10);
-    const topUserAgents = await db.getTopUserAgents(limit, days);
+    const startDate = params.get('startDate');
+    const endDate = params.get('endDate');
+    let topUserAgents;
+    if (startDate && endDate) {
+      topUserAgents = await db.getTopUserAgents(limit, null, startDate, endDate);
+    } else {
+      const days = parseInt(params.get('days') || '7', 10);
+      topUserAgents = await db.getTopUserAgents(limit, days);
+    }
     return jsonResponse({ topUserAgents });
   }
 

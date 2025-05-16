@@ -203,153 +203,254 @@ class Database {
 
   /**
    * 获取全局统计摘要
-   * @param {number} days - 统计最近 N 天的数据，例如 1 表示今天，7 表示最近7天
+   * @param {number | null} days - 统计最近 N 天的数据，例如 1 表示今天，7 表示最近7天. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getStatsSummary(days = 1) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1); // 计算起始日期
-    const startDate = dateCutoff.toISOString().split('T')[0]; // YYYY-MM-DD
+  async getStatsSummary(days = 1, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const params = [];
 
-    // 注意：D1 的 SQL 功能可能有限，复杂的窗口函数或子查询可能不支持
-    // 我们使用简单的聚合查询
-    const results = await this.db.prepare(
-      `SELECT 
-         SUM(visit_count) as totalVisits, 
+    if (startDate && endDate) {
+      dateFilter = "WHERE date >= ? AND date <= ?";
+      params.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "WHERE date >= ?";
+      params.push(defaultStartDate);
+    } else {
+      // 如果两者都未提供，可能需要一个默认行为或抛出错误
+      // 这里我们默认不加日期过滤，查询所有时间的汇总，但这可能不是期望的
+      // 或者可以强制要求 days 或 date range
+      console.warn("getStatsSummary: 未提供 days 或日期范围，将查询所有时间。");
+    }
+
+    const query = `
+      SELECT
+         SUM(visit_count) as totalVisits,
          COUNT(DISTINCT redirect_id) as activeRedirects
-       FROM daily_visits_summary 
-       WHERE date >= ?`
-    ).bind(startDate).first();
+       FROM daily_visits_summary
+       ${dateFilter}`;
+    
+    const results = await this.db.prepare(query).bind(...params).first();
 
-    // 获取总链接数（从 redirects 表）
     const totalRedirectsResult = await this.db.prepare(
       `SELECT COUNT(*) as count FROM redirects`
     ).first();
 
-    // 即使聚合数据为空，也直接返回聚合结果（可能为0）
     return {
       totalVisits: results?.totalVisits || 0,
       activeRedirects: results?.activeRedirects || 0,
       totalRedirects: totalRedirectsResult?.count || 0,
-      periodDays: days
-      // 移除了 source 字段
+      periodDays: (startDate && endDate) ? null : days, // 如果是日期范围，则 periodDays 无意义
+      filterStartDate: startDate,
+      filterEndDate: endDate
     };
   }
 
   /**
    * 获取时间序列统计数据
-   * @param {number} days - 获取最近 N 天的数据
+   * @param {number | null} days - 获取最近 N 天的数据. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getTimeSeriesStats(days = 7) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1);
-    const startDate = dateCutoff.toISOString().split('T')[0];
+  async getTimeSeriesStats(days = 7, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const params = [];
 
-    const results = await this.db.prepare(
-      `SELECT date, SUM(visit_count) as count 
-       FROM daily_visits_summary 
-       WHERE date >= ? 
-       GROUP BY date 
-       ORDER BY date ASC`
-    ).bind(startDate).all();
+    if (startDate && endDate) {
+      dateFilter = "WHERE date >= ? AND date <= ?";
+      params.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "WHERE date >= ?";
+      params.push(defaultStartDate);
+    } else {
+      console.warn("getTimeSeriesStats: 未提供 days 或日期范围，将查询所有时间。");
+    }
+    
+    const query = `
+      SELECT date, SUM(visit_count) as count
+       FROM daily_visits_summary
+       ${dateFilter}
+       GROUP BY date
+       ORDER BY date ASC`;
 
-    // 始终返回聚合表的结果，即使为空数组
+    const results = await this.db.prepare(query).bind(...params).all();
     return results.results || [];
   }
 
   /**
    * 获取 Top N Referer 域名
    * @param {number} limit - 返回 Top N 条记录
-   * @param {number} days - 统计最近 N 天的数据
+   * @param {number | null} days - 统计最近 N 天的数据. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getTopReferers(limit = 10, days = 7) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1);
-    const startDate = dateCutoff.toISOString().split('T')[0];
+  async getTopReferers(limit = 10, days = 7, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const queryParams = [];
 
-    const results = await this.db.prepare(
-      `SELECT referer_domain, SUM(visit_count) as count 
-       FROM daily_visits_summary 
-       WHERE date >= ? AND referer_domain IS NOT NULL AND referer_domain != 'Direct/Unknown' AND referer_domain != 'Invalid Referer'
-       GROUP BY referer_domain 
-       ORDER BY count DESC 
-       LIMIT ?`
-    ).bind(startDate, limit).all();
+    if (startDate && endDate) {
+      dateFilter = "date >= ? AND date <= ?";
+      queryParams.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "date >= ?";
+      queryParams.push(defaultStartDate);
+    } else {
+       console.warn("getTopReferers: 未提供 days 或日期范围，将查询所有时间。");
+    }
+    
+    const whereClause = dateFilter
+      ? `WHERE ${dateFilter} AND referer_domain IS NOT NULL AND referer_domain != 'Direct/Unknown' AND referer_domain != 'Invalid Referer'`
+      : `WHERE referer_domain IS NOT NULL AND referer_domain != 'Direct/Unknown' AND referer_domain != 'Invalid Referer'`;
 
-    // 始终返回聚合表的结果，即使为空数组
+    queryParams.push(limit);
+
+    const query = `
+      SELECT referer_domain, SUM(visit_count) as count
+       FROM daily_visits_summary
+       ${whereClause}
+       GROUP BY referer_domain
+       ORDER BY count DESC
+       LIMIT ?`;
+       
+    const results = await this.db.prepare(query).bind(...queryParams).all();
     return results.results || [];
   }
 
   /**
    * 获取 Top N User Agents (浏览器/OS)
    * @param {number} limit - 返回 Top N 条记录
-   * @param {number} days - 统计最近 N 天的数据
+   * @param {number | null} days - 统计最近 N 天的数据. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getTopUserAgents(limit = 10, days = 7) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1);
-    const startDate = dateCutoff.toISOString().split('T')[0];
+  async getTopUserAgents(limit = 10, days = 7, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const queryParams = [];
 
-    const results = await this.db.prepare(
-      `SELECT browser, os, SUM(visit_count) as count 
-       FROM daily_visits_summary 
-       WHERE date >= ? AND browser IS NOT NULL AND os IS NOT NULL AND browser != 'Unknown' AND os != 'Unknown'
-       GROUP BY browser, os 
-       ORDER BY count DESC 
-       LIMIT ?`
-    ).bind(startDate, limit).all();
+    if (startDate && endDate) {
+      dateFilter = "date >= ? AND date <= ?";
+      queryParams.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "date >= ?";
+      queryParams.push(defaultStartDate);
+    } else {
+      console.warn("getTopUserAgents: 未提供 days 或日期范围，将查询所有时间。");
+    }
 
-    // 始终返回聚合表的结果，即使为空数组
+    const whereClause = dateFilter
+      ? `WHERE ${dateFilter} AND browser IS NOT NULL AND os IS NOT NULL AND browser != 'Unknown' AND os != 'Unknown'`
+      : `WHERE browser IS NOT NULL AND os IS NOT NULL AND browser != 'Unknown' AND os != 'Unknown'`;
+      
+    queryParams.push(limit);
+
+    const query = `
+      SELECT browser, os, SUM(visit_count) as count
+       FROM daily_visits_summary
+       ${whereClause}
+       GROUP BY browser, os
+       ORDER BY count DESC
+       LIMIT ?`;
+
+    const results = await this.db.prepare(query).bind(...queryParams).all();
     return results.results || [];
   }
 
   /**
    * 获取 Top N 国家
    * @param {number} limit - 返回 Top N 条记录
-   * @param {number} days - 统计最近 N 天的数据
+   * @param {number | null} days - 统计最近 N 天的数据. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getTopCountries(limit = 10, days = 7) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1);
-    const startDate = dateCutoff.toISOString().split('T')[0];
+  async getTopCountries(limit = 10, days = 7, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const queryParams = [];
 
-    const results = await this.db.prepare(
-      `SELECT country, SUM(visit_count) as count 
-       FROM daily_visits_summary 
-       WHERE date >= ? AND country IS NOT NULL AND country != 'Unknown'
-       GROUP BY country 
-       ORDER BY count DESC 
-       LIMIT ?`
-    ).bind(startDate, limit).all();
+    if (startDate && endDate) {
+      dateFilter = "date >= ? AND date <= ?";
+      queryParams.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "date >= ?";
+      queryParams.push(defaultStartDate);
+    } else {
+      console.warn("getTopCountries: 未提供 days 或日期范围，将查询所有时间。");
+    }
 
-    // 始终返回聚合表的结果，即使为空数组
+    const whereClause = dateFilter
+      ? `WHERE ${dateFilter} AND country IS NOT NULL AND country != 'Unknown'`
+      : `WHERE country IS NOT NULL AND country != 'Unknown'`;
+
+    queryParams.push(limit);
+    
+    const query = `
+      SELECT country, SUM(visit_count) as count
+       FROM daily_visits_summary
+       ${whereClause}
+       GROUP BY country
+       ORDER BY count DESC
+       LIMIT ?`;
+
+    const results = await this.db.prepare(query).bind(...queryParams).all();
     return results.results || [];
   }
   
   /**
    * 获取 Top N 访问量的 URL (基于聚合数据)
    * @param {number} limit - 返回 Top N 条记录
-   * @param {number} days - 统计最近 N 天的数据
+   * @param {number | null} days - 统计最近 N 天的数据. 如果提供了 startDate 和 endDate，则此参数被忽略。
+   * @param {string | null} startDate - YYYY-MM-DD 格式的开始日期
+   * @param {string | null} endDate - YYYY-MM-DD 格式的结束日期
    */
-  async getTopUrlsByVisit(limit = 10, days = 7) {
-    const dateCutoff = new Date();
-    dateCutoff.setDate(dateCutoff.getDate() - days + 1);
-    const startDate = dateCutoff.toISOString().split('T')[0];
+  async getTopUrlsByVisit(limit = 10, days = 7, startDate = null, endDate = null) {
+    let dateFilter = "";
+    const queryParams = [];
+    
+    if (startDate && endDate) {
+      dateFilter = "s.date >= ? AND s.date <= ?";
+      queryParams.push(startDate, endDate);
+    } else if (days) {
+      const dateCutoff = new Date();
+      dateCutoff.setDate(dateCutoff.getDate() - days + 1);
+      const defaultStartDate = dateCutoff.toISOString().split('T')[0];
+      dateFilter = "s.date >= ?";
+      queryParams.push(defaultStartDate);
+    } else {
+      console.warn("getTopUrlsByVisit: 未提供 days 或日期范围，将查询所有时间。");
+    }
 
-    const results = await this.db.prepare(
-      `SELECT 
-         s.redirect_id, 
-         r.key, 
+    const whereClause = dateFilter ? `WHERE ${dateFilter}` : "";
+    queryParams.push(limit);
+
+    const query = `
+      SELECT
+         s.redirect_id,
+         r.key,
          r.url,
          SUM(s.visit_count) as total_visits
        FROM daily_visits_summary s
        JOIN redirects r ON s.redirect_id = r.id
-       WHERE s.date >= ? 
-       GROUP BY s.redirect_id, r.key, r.url 
-       ORDER BY total_visits DESC 
-       LIMIT ?`
-    ).bind(startDate, limit).all();
-    
-    // 始终返回聚合表的结果，即使为空数组
+       ${whereClause}
+       GROUP BY s.redirect_id, r.key, r.url
+       ORDER BY total_visits DESC
+       LIMIT ?`;
+       
+    const results = await this.db.prepare(query).bind(...queryParams).all();
     return results.results || [];
   }
 

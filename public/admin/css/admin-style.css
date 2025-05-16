@@ -1,0 +1,336 @@
+/* Global Styles */
+body {
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  line-height: 1.6;
+  color: #333;
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 20px;
+  background-color: #f5f5f5; /* 主背景色 */
+}
+
+/* Header and Navigation */
+header {
+  background-color: #fff; /* 内容区背景色 */
+  padding: 20px;
+  border-radius: 5px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap; /* 允许换行 */
+}
+
+header h1 {
+  color: #2c3e50;
+  margin: 0;
+  font-size: 1.8em; /* 调整标题大小 */
+}
+
+.nav {
+  margin-top: 15px; /* 保持与原样式的间距 */
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px; /* 调整导航项间距 */
+  align-items: center;
+}
+
+.nav a {
+  color: #3498db; /* 主色 */
+  text-decoration: none;
+  padding: 8px 12px; /* 调整内边距 */
+  border-radius: 4px; /* 统一圆角 */
+  transition: background-color 0.3s, color 0.3s;
+  font-size: 16px; /* 基础字体大小 */
+}
+
+.nav a:hover {
+  background-color: #eaf2f8;
+  color: #2980b9;
+}
+
+.nav a.active {
+  background-color: #3498db; /* 主色 */
+  color: white;
+  font-weight: bold;
+}
+
+/* Main Content Area */
+.main-content {
+  background-color: #fff; /* 内容区背景色 */
+  padding: 25px;
+  border-radius: 5px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+}
+
+.main-content h2 {
+  color: #2c3e50;
+  margin-top: 0; /* 移除默认的上边距 */
+  margin-bottom: 20px;
+  font-size: 1.5em;
+}
+
+.main-content h3 {
+  color: #34495e;
+  margin-top: 0;
+  margin-bottom: 15px;
+  font-size: 1.2em;
+}
+
+/* Forms */
+.form-group {
+  margin-bottom: 20px; /* 增加表单组间距 */
+}
+
+label {
+  display: block;
+  margin-bottom: 8px; /* 增加标签下边距 */
+  font-weight: 500;
+  color: #555;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="url"],
+input[type="email"], /* 添加 email 类型 */
+select, /* 添加 select 样式 */
+textarea { /* 添加 textarea 样式 */
+  width: 100%;
+  padding: 12px; /* 增加内边距 */
+  border: 1px solid #ddd;
+  border-radius: 4px; /* 统一圆角 */
+  font-size: 16px; /* 基础字体大小 */
+  box-sizing: border-box;
+  transition: border-color 0.3s;
+}
+
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="url"]:focus,
+input[type="email"]:focus,
+select:focus,
+textarea:focus {
+  border-color: #3498db; /* 主色 */
+  outline: none;
+}
+
+/* Buttons */
+button,
+.button { /* 添加 .button 类以供非 button 元素使用 */
+  background-color: #3498db; /* 主色 */
+  color: white;
+  border: none;
+  padding: 10px 20px; /* 调整内边距 */
+  border-radius: 4px; /* 统一圆角 */
+  cursor: pointer;
+  font-size: 16px; /* 基础字体大小 */
+  transition: background-color 0.3s;
+  text-decoration: none; /* 确保链接样式的按钮无下划线 */
+  display: inline-block; /* 确保链接样式的按钮正确显示 padding */
+}
+
+button:hover,
+.button:hover {
+  background-color: #2980b9; /* 主色加深 */
+}
+
+button.delete-btn,
+.button.delete-btn {
+  background-color: #e74c3c;
+}
+
+button.delete-btn:hover,
+.button.delete-btn:hover {
+  background-color: #c0392b;
+}
+
+button.cancel-btn, /* 新增取消按钮样式 */
+.button.cancel-btn {
+  background-color: #95a5a6;
+}
+
+button.cancel-btn:hover,
+.button.cancel-btn:hover {
+  background-color: #7f8c8d;
+}
+
+button:disabled,
+.button:disabled {
+  background-color: #bdc3c7;
+  cursor: not-allowed;
+}
+
+/* Tables */
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px; /* 表格上边距 */
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* 轻微阴影 */
+}
+
+th, td {
+  padding: 12px 15px;
+  text-align: left;
+  border-bottom: 1px solid #e0e0e0; /* 调整边框颜色 */
+  word-break: break-all;
+}
+
+th {
+  background-color: #f9f9f9; /* 表头背景色 */
+  font-weight: 600; /* 表头字体加粗 */
+  color: #444;
+}
+
+tr:hover {
+  background-color: #f5f5f5; /* 主背景色，用于悬停 */
+}
+
+/* Cards (Generic card style) */
+.card {
+  background-color: #fff; /* 内容区背景色 */
+  padding: 20px;
+  border-radius: 5px;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+  margin-bottom: 20px;
+}
+
+.card-header {
+  padding-bottom: 15px;
+  margin-bottom: 15px;
+  border-bottom: 1px solid #eee;
+}
+
+.card-title {
+  margin: 0;
+  font-size: 1.25em;
+  color: #333;
+}
+
+/* Utility Classes */
+.text-center {
+  text-align: center;
+}
+
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+
+/* Error and Success Messages */
+.error-message, .success-message, .info-message { /* 统一消息类名 */
+  padding: 10px 15px;
+  border-radius: 4px;
+  margin-bottom: 15px;
+  font-size: 0.95em;
+}
+
+.error-message {
+  color: #721c24;
+  background-color: #f8d7da;
+  border: 1px solid #f5c6cb;
+}
+
+.success-message {
+  color: #155724;
+  background-color: #d4edda;
+  border: 1px solid #c3e6cb;
+}
+
+.info-message { /* 新增 info 消息样式 */
+  color: #0c5460;
+  background-color: #d1ecf1;
+  border: 1px solid #bee5eb;
+}
+
+/* Specific element styling from urls.html, adapted */
+#url-form-container {
+  background-color: #f8f9fa; /* 略微不同的背景以区分 */
+  padding: 20px;
+  margin-bottom: 20px;
+  border-radius: 5px;
+  border: 1px solid #e9ecef; /* 添加边框 */
+}
+
+#loading-message, #no-urls-message {
+  text-align: center;
+  padding: 20px;
+  color: #666;
+}
+
+/* Responsive Table (from urls.html, slightly adjusted) */
+@media (max-width: 768px) {
+  header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  header h1 {
+    margin-bottom: 10px;
+  }
+  .nav {
+    flex-direction: column;
+    gap: 8px; /* 调整小屏幕导航间距 */
+    width: 100%; /* 导航占满宽度 */
+  }
+  .nav a {
+    display: block; /* 导航项块级显示 */
+    width: 100%;
+    box-sizing: border-box;
+    text-align: center;
+  }
+
+  table, thead, tbody, th, td, tr {
+    display: block;
+  }
+  thead tr {
+    position: absolute;
+    top: -9999px;
+    left: -9999px;
+  }
+  tr {
+    border: 1px solid #ccc;
+    margin-bottom: 10px;
+    border-radius: 4px; /* 为行添加圆角 */
+    background-color: #fff; /* 确保行背景 */
+  }
+  td {
+    border: none;
+    border-bottom: 1px solid #eee;
+    position: relative;
+    padding-left: 50%;
+    white-space: normal;
+    text-align: left;
+    line-height: 1.5; /* 调整行高 */
+  }
+  td:last-child {
+    border-bottom: none; /* 移除最后一个单元格的下边框 */
+  }
+  td:before {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%); /* 垂直居中 */
+    left: 10px; /* 调整标签位置 */
+    width: 45%;
+    padding-right: 10px;
+    white-space: nowrap;
+    text-align: left;
+    font-weight: bold;
+    content: attr(data-label);
+    color: #333;
+  }
+  .main-content h2 {
+    font-size: 1.3em; /* 调整小屏幕标题大小 */
+  }
+  button, .button {
+    width: 100%; /* 按钮在小屏幕上占满宽度 */
+    margin-bottom: 10px;
+  }
+  button:last-child, .button:last-child {
+    margin-bottom: 0;
+  }
+  .form-group div[style*="display: flex"] { /* 针对表单内横排按钮 */
+    flex-direction: column;
+  }
+}

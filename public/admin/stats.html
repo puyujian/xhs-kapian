@@ -3,12 +3,84 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>统计信息</title>
+    <title>访问统计 - URL重定向系统</title>
+    <link rel="stylesheet" href="css/admin-style.css">
 </head>
 <body>
-    <h1>统计信息</h1>
-    <div id="stats-container"></div>
+  <header>
+    <h1>URL重定向系统 - 管理后台</h1>
+    <nav class="nav">
+      <a href="/admin/index.html">首页</a>
+      <a href="/admin/urls.html">URL管理</a>
+      <a href="/admin/stats.html" class="active">访问统计</a>
+      <a href="/" target="_blank">访问前台</a>
+      <a href="#" id="logout">退出登录</a>
+    </nav>
+  </header>
 
-    <script src="/admin/js/admin-stats.js"></script>
+  <div class="main-content">
+    <h2>访问统计</h2>
+    <div class="date-filter-container" style="margin-bottom: 20px;">
+      <label for="startDate">起始日期:</label>
+      <input type="date" id="startDate" name="startDate">
+      <label for="endDate" style="margin-left: 10px;">结束日期:</label>
+      <input type="date" id="endDate" name="endDate">
+      <button id="filterButton" style="margin-left: 10px;">筛选</button>
+    </div>
+
+    <!-- 时间序列图容器 -->
+    <div class="chart-container" style="margin-bottom: 30px;">
+        <h3>访问趋势</h3>
+        <canvas id="visits-timeseries-chart"></canvas>
+        <p id="timeSeriesChart-loading" style="display: none;">正在加载图表数据...</p>
+        <p id="timeSeriesChart-empty" style="display: none;">无数据显示</p>
+    </div>
+
+    <!-- 最常访问的 URL 图表容器 -->
+    <div class="chart-container" style="margin-bottom: 30px;">
+        <h3>最常访问的 URL</h3>
+        <canvas id="topUrlsChart"></canvas>
+        <p id="topUrlsChart-loading" style="display: none;">正在加载图表数据...</p>
+        <p id="topUrlsChart-empty" style="display: none;">无数据显示</p>
+    </div>
+
+    <div id="stats-container">
+        <!-- 统计数据将由 admin-stats.js 脚本加载到这里 (例如 Top Countries/Referers/User Agents 表格) -->
+    </div>
+  </div>
+
+  <script>
+    // 简单的认证检查和登出逻辑，与 urls.html 保持一致
+    // 检查登录状态函数
+    function checkAuth() {
+      const token = localStorage.getItem('token');
+      // 如果页面不是登录页面，且没有找到token，则重定向到登录页
+      if (window.location.pathname !== '/admin/login.html' && !token) {
+        console.log('未检测到认证令牌，重定向到登录页面');
+        window.location.href = '/admin/login.html';
+        return false;
+      }
+      return true;
+    }
+
+    // 退出登录
+    const logoutButton = document.getElementById('logout');
+    if (logoutButton) {
+        logoutButton.addEventListener('click', function(e) {
+          e.preventDefault();
+          localStorage.removeItem('token');
+          localStorage.removeItem('username');
+          window.location.href = '/admin/login.html';
+        });
+    }
+
+    // 页面加载时检查认证
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', checkAuth);
+    } else {
+        checkAuth(); // DOM already loaded
+    }
+  </script>
+  <script src="/admin/js/admin-stats.js"></script>
 </body>
 </html>
